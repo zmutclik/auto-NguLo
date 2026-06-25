@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-NguLo — Execution History</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: { DEFAULT: '#0F172A', card: '#1E293B', border: '#334155', hover: '#263348' },
+                        brand: { DEFAULT: '#6366F1', hover: '#5558E6' },
+                        success: '#10B981', danger: '#EF4444', warning: '#F59E0B',
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        * { font-family: 'Inter', system-ui, sans-serif; }
+        body { background: #0F172A; color: #F1F5F9; }
+        .font-mono-custom { font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0F172A; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        .animate-slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="min-h-screen" x-data="historyPage()">
+
+    <!-- Navigation -->
+    <nav class="bg-slate-900/80 backdrop-blur-md border-b border-surface-border sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-4 flex items-center justify-between h-16">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-gradient-to-br from-brand to-purple-600 rounded-xl flex items-center justify-center shadow-sm shadow-brand/20">
+                    <span class="text-lg">🤖</span>
+                </div>
+                <span class="font-bold text-lg bg-gradient-to-r from-brand to-purple-400 bg-clip-text text-transparent">Auto-NguLo</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <a href="dashboard.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">📋 Scripts</a>
+                <a href="history.html" class="px-4 py-2 bg-brand/10 text-brand rounded-lg text-sm font-medium">📜 History</a>
+                <a href="settings.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">⚙️ Settings</a>
+                <div class="w-px h-6 bg-surface-border mx-2 hidden sm:block"></div>
+                <a href="login.html" class="px-4 py-2 text-slate-400 hover:text-danger hover:bg-red-500/10 rounded-lg text-sm font-medium transition-colors">🔒 Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-4 py-8">
+
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div>
+                <h1 class="text-2xl font-bold">📜 Execution History</h1>
+                <p class="text-slate-400 text-sm mt-1">
+                    <span x-text="filteredHistory.length"></span> dari <span x-text="executionHistory.length"></span> riwayat eksekusi
+                </p>
+            </div>
+            <div class="flex gap-2">
+                <button @click="exportAllHistory()"
+                        class="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-semibold rounded-lg px-4 py-3 transition-colors">
+                    📤 Export JSON
+                </button>
+                <button @click="confirmClearAll = true"
+                        class="inline-flex items-center gap-1.5 hover:bg-red-500/10 text-slate-400 hover:text-danger text-sm font-semibold rounded-lg px-4 py-3 transition-colors border border-slate-700 hover:border-danger/30">
+                    🗑️ Clear All
+                </button>
+            </div>
+        </div>
+
+        <!-- Search & Filter -->
+        <div class="bg-surface-card border border-surface-border rounded-xl p-4 mb-6">
+            <div class="flex flex-col sm:flex-row gap-3">
+                <div class="relative flex-1">
+                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+                    <input x-model="searchQuery" type="text"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg pl-10 pr-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition-all text-sm"
+                           placeholder="Cari riwayat (nama script atau log)...">
+                </div>
+                <select x-model="filterStatus" class="bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-brand">
+                    <option value="all">Semua Status</option>
+                    <option value="success">✅ Completed</option>
+                    <option value="stopped">⏹️ Stopped</option>
+                    <option value="failed">❌ Failed</option>
+                </select>
+                <select x-model="sortBy" class="bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-brand">
+                    <option value="newest">Terbaru</option>
+                    <option value="oldest">Terlama</option>
+                    <option value="duration">Durasi Terpanjang</option>
+                    <option value="name">Nama Script A-Z</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- History List -->
+        <div class="space-y-4">
+            <template x-for="(entry, idx) in filteredHistory" :key="entry.id">
+                <div class="bg-surface-card border border-surface-border rounded-xl overflow-hidden shadow-md hover:border-slate-600 transition-all animate-slide-up">
+                    <!-- Card Header -->
+                    <div class="p-5 cursor-pointer" @click="entry._expanded = !entry._expanded">
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span class="text-xl"
+                                          x-text="entry.status === 'success' ? '✅' : entry.status === 'stopped' ? '⏹️' : '❌'"></span>
+                                    <div>
+                                        <h3 class="font-semibold text-slate-100 truncate" x-text="entry.scriptName"></h3>
+                                        <p class="text-xs text-slate-500 font-mono">#<span x-text="entry.id"></span></p>
+                                    </div>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 ml-10">
+                                    <span>📅 <span x-text="entry.date"></span></span>
+                                    <span>⏱️ <span x-text="entry.duration + 's'"></span></span>
+                                    <span class="text-success">✅ <span x-text="entry.successes"></span></span>
+                                    <span class="text-danger">❌ <span x-text="entry.failures"></span></span>
+                                    <span>⚡ <span x-text="entry.totalActions + ' actions'"></span></span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span class="text-xs px-2.5 py-1 rounded-full font-medium"
+                                      :class="entry.status === 'success' ? 'bg-success/10 text-success' : entry.status === 'stopped' ? 'bg-warning/10 text-warning' : 'bg-danger/10 text-danger'"
+                                      x-text="entry.status === 'success' ? 'Completed' : entry.status === 'stopped' ? 'Stopped' : 'Failed'"></span>
+                                <svg :class="entry._expanded ? 'rotate-180' : ''"
+                                     class="w-4 h-4 text-slate-500 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Expanded: Full Log Detail -->
+                    <div x-show="entry._expanded" x-transition
+                         class="border-t border-surface-border bg-slate-900/50">
+                        <!-- Log header bar -->
+                        <div class="flex items-center justify-between px-5 py-3 bg-slate-800/30">
+                            <span class="text-xs text-slate-400 uppercase tracking-wider font-medium">
+                                📋 Full Log — <span x-text="entry.logs.length + ' entries'"></span>
+                            </span>
+                            <button @click.stop="copyLog(entry)"
+                                    class="text-xs text-brand hover:underline">📋 Copy Log</button>
+                        </div>
+                        <!-- Log content -->
+                        <div class="px-5 pb-4 max-h-80 overflow-y-auto font-mono-custom text-xs leading-relaxed">
+                            <template x-for="log in entry.logs" :key="log._idx">
+                                <div class="py-0.5"
+                                     :class="log.level === 'success' ? 'text-green-400' : log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-yellow-400' : 'text-slate-400'">
+                                    <span class="text-slate-600 select-none" x-text="'[' + log.time + '] '"></span>
+                                    <span x-text="log.message"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Footer Actions -->
+                    <div class="border-t border-surface-border px-5 py-3 flex flex-wrap gap-2 bg-slate-900/30">
+                        <a :href="'execution.html?script=' + encodeURIComponent(entry.scriptName) + '&rerun=' + entry.id"
+                           class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-xs font-semibold rounded-lg px-3 py-2 transition-colors shadow-sm shadow-success/20">
+                            🔄 Rerun
+                        </a>
+                        <button @click="copyLog(entry)"
+                                class="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold rounded-lg px-3 py-2 transition-colors">
+                            📋 Copy Log
+                        </button>
+                        <button @click="deleteEntry(entry.id)"
+                                class="inline-flex items-center gap-1.5 hover:bg-red-500/10 text-slate-400 hover:text-danger text-xs font-semibold rounded-lg px-3 py-2 transition-colors ml-auto">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Empty State -->
+            <div x-show="executionHistory.length === 0"
+                 class="bg-surface-card border border-surface-border border-dashed rounded-2xl p-16 text-center">
+                <span class="text-6xl block mb-4">📜</span>
+                <p class="text-slate-400 text-lg mb-2">Belum ada riwayat eksekusi</p>
+                <p class="text-slate-500 text-sm mb-6">Setiap kali kamu menjalankan script, riwayatnya akan muncul di sini</p>
+                <a href="dashboard.html"
+                   class="inline-flex items-center gap-2 bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all text-sm">
+                    📋 Buka Scripts
+                </a>
+            </div>
+
+            <!-- No Results -->
+            <div x-show="executionHistory.length > 0 && filteredHistory.length === 0"
+                 class="text-center py-12">
+                <span class="text-5xl block mb-3">🔍</span>
+                <p class="text-slate-400">Tidak ada riwayat yang cocok dengan filter</p>
+                <button @click="searchQuery = ''; filterStatus = 'all'; sortBy = 'newest'"
+                        class="text-sm text-brand hover:underline mt-2">Reset filter</button>
+            </div>
+        </div>
+
+        <!-- Stats Footer -->
+        <div x-show="executionHistory.length > 0" class="mt-8 pt-6 border-t border-surface-border">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                    <p class="text-2xl font-bold text-slate-200" x-text="executionHistory.length"></p>
+                    <p class="text-xs text-slate-500 mt-1">Total Runs</p>
+                </div>
+                <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                    <p class="text-2xl font-bold text-success" x-text="executionHistory.filter(e=>e.status==='success').length"></p>
+                    <p class="text-xs text-slate-500 mt-1">Completed</p>
+                </div>
+                <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                    <p class="text-2xl font-bold text-danger" x-text="executionHistory.filter(e=>e.status==='failed').length"></p>
+                    <p class="text-xs text-slate-500 mt-1">Failed</p>
+                </div>
+                <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                    <p class="text-2xl font-bold text-warning" x-text="executionHistory.filter(e=>e.status==='stopped').length"></p>
+                    <p class="text-xs text-slate-500 mt-1">Stopped</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Clear All Confirmation Modal -->
+    <div x-show="confirmClearAll" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+         @click.self="confirmClearAll = false">
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div class="text-center mb-4">
+                <span class="text-6xl block mb-3">⚠️</span>
+                <h3 class="text-xl font-bold text-danger">Clear All History?</h3>
+                <p class="text-slate-400 text-sm mt-2">Semua <span x-text="executionHistory.length"></span> riwayat akan dihapus permanen. Aksi ini tidak bisa di-undo!</p>
+            </div>
+            <div class="flex gap-3">
+                <button @click="confirmClearAll = false"
+                        class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium rounded-lg py-2.5 transition-colors text-sm">Batal</button>
+                <button @click="clearAll()"
+                        class="flex-1 bg-danger hover:bg-red-600 text-white font-medium rounded-lg py-2.5 transition-colors text-sm">🗑️ Clear All</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function historyPage() {
+            return {
+                searchQuery: '',
+                filterStatus: 'all',
+                sortBy: 'newest',
+                confirmClearAll: false,
+                executionHistory: [],
+
+                init() {
+                    this.loadHistory();
+                },
+
+                loadHistory() {
+                    try {
+                        this.executionHistory = JSON.parse(localStorage.getItem('ngulo_exec_history') || '[]');
+                    } catch(e) {
+                        this.executionHistory = [];
+                    }
+                },
+
+                persistHistory() {
+                    try { localStorage.setItem('ngulo_exec_history', JSON.stringify(this.executionHistory)); } catch(e) {}
+                },
+
+                get filteredHistory() {
+                    let result = [...this.executionHistory];
+
+                    // Filter by status
+                    if (this.filterStatus !== 'all') {
+                        result = result.filter(e => e.status === this.filterStatus);
+                    }
+
+                    // Search
+                    if (this.searchQuery) {
+                        const q = this.searchQuery.toLowerCase();
+                        result = result.filter(e => {
+                            if (e.scriptName.toLowerCase().includes(q)) return true;
+                            if (String(e.id).includes(q)) return true;
+                            if (e.logs.some(l => l.message.toLowerCase().includes(q))) return true;
+                            return false;
+                        });
+                    }
+
+                    // Sort
+                    switch (this.sortBy) {
+                        case 'oldest': result.sort((a, b) => a.id - b.id); break;
+                        case 'duration': result.sort((a, b) => b.duration - a.duration); break;
+                        case 'name': result.sort((a, b) => a.scriptName.localeCompare(b.scriptName)); break;
+                        case 'newest':
+                        default: result.sort((a, b) => b.id - a.id); break;
+                    }
+
+                    return result;
+                },
+
+                deleteEntry(entryId) {
+                    this.executionHistory = this.executionHistory.filter(e => e.id !== entryId);
+                    this.persistHistory();
+                },
+
+                clearAll() {
+                    this.executionHistory = [];
+                    this.confirmClearAll = false;
+                    this.persistHistory();
+                },
+
+                copyLog(entry) {
+                    const text = entry.logs.map(l => `[${l.time}] ${l.message}`).join('\n');
+                    navigator.clipboard.writeText(text);
+                },
+
+                exportAllHistory() {
+                    const json = JSON.stringify(this.executionHistory, null, 2);
+                    const blob = new Blob([json], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'auto-ngulo-history-' + new Date().toISOString().slice(0,10) + '.json';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            };
+        }
+    </script>
+
+</body>
+</html>

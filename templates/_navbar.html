@@ -1,0 +1,19 @@
+{% macro navbar(active) %}
+<nav class="bg-slate-900/80 backdrop-blur-md border-b border-surface-border sticky top-0 z-50">
+    <div class="max-w-5xl mx-auto px-4 flex items-center justify-between h-16">
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 bg-gradient-to-br from-brand to-purple-600 rounded-xl flex items-center justify-center shadow-sm shadow-brand/20">
+                <span class="text-lg">🤖</span>
+            </div>
+            <span class="font-bold text-lg bg-gradient-to-r from-brand to-purple-400 bg-clip-text text-transparent">Auto-NguLo</span>
+        </div>
+        <div class="flex items-center gap-1">
+            <a href="/dashboard" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors {% if active=='scripts' %}bg-brand/10 text-brand{% endif %}">📋 Scripts</a>
+            <a href="/history" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors {% if active=='history' %}bg-brand/10 text-brand{% endif %}">📜 History</a>
+            <a href="/settings" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors {% if active=='settings' %}bg-brand/10 text-brand{% endif %}">⚙️ Settings</a>
+            <div class="w-px h-6 bg-surface-border mx-2 hidden sm:block"></div>
+            <a href="/logout" class="px-4 py-2 text-slate-400 hover:text-danger hover:bg-red-500/10 rounded-lg text-sm font-medium transition-colors">🔒 Logout</a>
+        </div>
+    </div>
+</nav>
+{% endmacro %}

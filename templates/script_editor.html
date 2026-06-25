@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% block title %}Script Editor{% endblock %}
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<style>
+    .sortable-ghost { opacity: 0.4; background: #312E81 !important; border: 2px dashed #6366F1 !important; border-radius: 12px; }
+    .sortable-chosen { box-shadow: 0 0 20px rgba(99,102,241,0.4); }
+    .drag-handle { cursor: grab; }
+    .drag-handle:active { cursor: grabbing; }
+    .action-card { transition: all 0.2s ease; }
+    .action-card:hover { border-color: #6366F1; }
+    @keyframes slideDown { from { opacity:0; max-height:0; } to { opacity:1; max-height:500px; } }
+    .animate-slide { animation: slideDown 0.3s ease-out; }
+</style>
+{% endblock %}
+{% block content %}
+
+<div class="flex items-center gap-3 mb-6">
+    <a href="/dashboard" class="text-slate-400 hover:text-slate-200 transition-colors">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+    </a>
+    <h1 class="text-xl font-bold" x-text="isNew ? '➕ New Script' : '✏️ Edit Script'"></h1>
+</div>
+
+<div x-data="scriptEditor()" x-init="init()" class="grid lg:grid-cols-3 gap-6">
+
+    <!-- LEFT: Script Info -->
+    <div class="lg:col-span-1">
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 sticky top-24">
+            <h2 class="font-semibold mb-5 flex items-center gap-2"><span class="w-7 h-7 rounded-lg bg-brand/10 flex items-center justify-center">📋</span> Script Info</h2>
+            <div class="mb-4">
+                <label class="block text-xs font-medium text-slate-400 mb-1.5">Name *</label>
+                <input x-model="script.name" type="text" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand">
+            </div>
+            <div class="mb-4">
+                <label class="block text-xs font-medium text-slate-400 mb-1.5">Description</label>
+                <textarea x-model="script.description" rows="2" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand resize-none"></textarea>
+            </div>
+            <div class="mb-4">
+                <label class="block text-xs font-medium text-slate-400 mb-1.5">Repeat Count</label>
+                <input x-model.number="script.repeat_count" type="number" min="1" max="999" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+            </div>
+            <div class="mb-4">
+                <label class="block text-xs font-medium text-slate-400 mb-1.5">Delay Between Actions (ms)</label>
+                <input x-model.number="script.delay_between_ms" type="number" min="0" max="60000" step="100" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+            </div>
+            <button @click="save()" class="w-full bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-4 py-3 transition-all shadow-lg shadow-brand/25 text-sm">💾 <span x-text="isNew ? 'Create Script' : 'Save Changes'"></span></button>
+            <div class="mt-6 pt-4 border-t border-surface-border">
+                <div class="flex items-center justify-between text-sm"><span class="text-slate-400">Actions</span><span class="text-brand font-bold" x-text="actions.length + ' actions'"></span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT: Actions -->
+    <div class="lg:col-span-2 space-y-4">
+        <div class="flex items-center justify-between">
+            <h2 class="font-semibold flex items-center gap-2"><span class="w-7 h-7 rounded-lg bg-success/10 flex items-center justify-center">⚡</span> Actions</h2>
+            <button @click="addAction()" class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-sm font-semibold rounded-lg px-4 py-2.5 transition-colors shadow-sm shadow-success/20">＋ Add Action</button>
+        </div>
+
+        <div id="actions-list" class="space-y-3">
+            <template x-for="(a, idx) in actions" :key="a._id">
+                <div :data-id="a._id" class="action-card bg-surface-card border border-surface-border rounded-xl overflow-hidden group">
+                    <div class="flex items-center gap-3 p-4 cursor-pointer" @click="a._expanded = !a._expanded">
+                        <span class="drag-handle text-slate-600 group-hover:text-slate-400 shrink-0"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h2v2H8V6zm6 0h2v2h-2V6zM8 11h2v2H8v-2zm6 0h2v2h-2v-2zm-6 5h2v2H8v-2zm6 0h2v2h-2v-2z"/></svg></span>
+                        <span class="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400 font-mono shrink-0" x-text="idx+1"></span>
+                        <span x-text="typeIcon(a.action_type)" class="text-lg"></span>
+                        <div class="flex-1 min-w-0">
+                            <span class="text-sm font-medium text-slate-200" x-text="a.action_type + ' [' + a.name + ']'"></span>
+                        </div>
+                        <svg :class="a._expanded ? 'rotate-180' : ''" class="w-4 h-4 text-slate-500 transition-transform shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </div>
+
+                    <div x-show="a._expanded" x-transition class="border-t border-surface-border bg-slate-900/50 px-4 py-4 animate-slide">
+                        <div class="mb-3">
+                            <label class="block text-xs font-medium text-slate-400 mb-1">Name <span class="text-slate-500">(lowercase_underscore)</span></label>
+                            <input x-model="a.name" type="text" @input="a.name = a.name.toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'')" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand">
+                        </div>
+                        <div class="mb-3">
+                            <label class="block text-xs font-medium text-slate-500 mb-2">Action Type</label>
+                            <div class="grid grid-cols-5 gap-1.5">
+                                <template x-for="t in actionTypes" :key="t">
+                                    <button @click="a.action_type = t" :class="a.action_type === t ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'" class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight"><span x-text="typeIcon(t)"></span><br><span x-text="t.replace('screenshot_','').replace('long_','long').replace('type_','type')"></span></button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Tap / Long Press -->
+                        <div x-show="a.action_type === 'tap' || a.action_type === 'long_press'" class="space-y-2 mb-3">
+                            <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">X</label><input x-model.number="a.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div><div><label class="text-xs text-slate-500">Y</label><input x-model.number="a.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div></div>
+                            <div x-show="a.action_type === 'long_press'"><label class="text-xs text-slate-500">Duration (ms)</label><input x-model.number="a.duration_ms" type="number" min="100" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+                        </div>
+
+                        <!-- Swipe -->
+                        <div x-show="a.action_type === 'swipe'" class="space-y-2 mb-3">
+                            <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">From X</label><input x-model.number="a.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">From Y</label><input x-model.number="a.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To X</label><input x-model.number="a.x2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To Y</label><input x-model.number="a.y2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div></div>
+                            <div><label class="text-xs text-slate-500">Duration (ms)</label><input x-model.number="a.duration_ms" type="number" min="50" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+                        </div>
+
+                        <!-- Screenshot Match -->
+                        <div x-show="a.action_type === 'screenshot_match'" class="space-y-2 mb-3">
+                            <div><label class="text-xs text-slate-500">Template Path</label><input x-model="a.template_path" type="text" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono"></div>
+                            <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">Threshold</label><input x-model.number="a.match_threshold" type="number" min="0" max="1" step="0.05" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">Retry Count</label><input x-model.number="a.retry_count" type="number" min="1" max="99" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div></div>
+                            <div><label class="text-xs text-slate-500">Retry Delay (ms)</label><input x-model.number="a.retry_delay_ms" type="number" min="0" step="100" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+                            <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-success">✅ Jump on Success</label><input x-model="a.jump_on_success" type="text" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono" placeholder="action_name"></div><div><label class="text-xs text-danger">❌ Jump on Fail</label><input x-model="a.jump_on_fail" type="text" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono" placeholder="action_name"></div></div>
+                        </div>
+
+                        <!-- Wait -->
+                        <div x-show="a.action_type === 'wait'" class="mb-3"><label class="text-xs text-slate-500">Duration (ms)</label><input x-model.number="a.wait_ms" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+
+                        <!-- Push Key -->
+                        <div x-show="a.action_type === 'push_key'" class="mb-3">
+                            <label class="text-xs text-slate-500">Key Code</label>
+                            <select x-model="a.key_code" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100">
+                                <option value="HOME">HOME</option><option value="BACK">BACK</option><option value="RECENTS">RECENTS</option>
+                                <option value="VOLUME_UP">VOLUME_UP</option><option value="VOLUME_DOWN">VOLUME_DOWN</option>
+                                <option value="ENTER">ENTER</option><option value="DEL">DEL</option><option value="POWER">POWER</option>
+                                <option value="DPAD_UP">DPAD_UP</option><option value="DPAD_DOWN">DPAD_DOWN</option>
+                                <option value="DPAD_LEFT">DPAD_LEFT</option><option value="DPAD_RIGHT">DPAD_RIGHT</option>
+                            </select>
+                        </div>
+
+                        <!-- Combo -->
+                        <div x-show="a.action_type === 'combo'" class="mb-3">
+                            <label class="text-xs text-slate-500">Combo</label>
+                            <select x-model="a.combo_action" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100">
+                                <option value="select_all">Select All</option><option value="copy">Copy</option><option value="paste">Paste</option>
+                                <option value="cut">Cut</option><option value="undo">Undo</option><option value="redo">Redo</option>
+                            </select>
+                        </div>
+
+                        <!-- Fetch API -->
+                        <div x-show="a.action_type === 'fetch_api'" class="space-y-2 mb-3">
+                            <div class="grid grid-cols-4 gap-2"><div class="col-span-1"><label class="text-xs text-slate-500">Method</label><select x-model="a.api_method" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select></div><div class="col-span-3"><label class="text-xs text-slate-500">URL</label><input x-model="a.api_url" type="text" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono"></div></div>
+                            <div><label class="text-xs text-slate-500">Save to Variable</label><input x-model="a.api_save_to_var" type="text" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono"></div>
+                        </div>
+
+                        <!-- Variable -->
+                        <div x-show="a.action_type === 'variable'" class="space-y-2 mb-3">
+                            <div><label class="text-xs text-slate-500">Variable Name</label><input x-model="a.var_name" type="text" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono"></div>
+                            <div class="grid grid-cols-3 gap-2">
+                                <button @click="a.var_operation='set'" :class="a.var_operation==='set'?'bg-brand text-white border-brand':'bg-slate-800 border-surface-border text-slate-400'" class="border rounded-lg p-1.5 text-xs text-center transition-all">📥 Set</button>
+                                <button @click="a.var_operation='update'" :class="a.var_operation==='update'?'bg-brand text-white border-brand':'bg-slate-800 border-surface-border text-slate-400'" class="border rounded-lg p-1.5 text-xs text-center transition-all">🔄 Update</button>
+                                <button @click="a.var_operation='get'" :class="a.var_operation==='get'?'bg-brand text-white border-brand':'bg-slate-800 border-surface-border text-slate-400'" class="border rounded-lg p-1.5 text-xs text-center transition-all">📤 Get</button>
+                            </div>
+                            <div x-show="a.var_operation !== 'get'"><label class="text-xs text-slate-500">Value</label><input x-model="a.var_value" type="text" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono"></div>
+                        </div>
+
+                        <!-- Type Text -->
+                        <div x-show="a.action_type === 'type_text'" class="space-y-2 mb-3">
+                            <div><label class="text-xs text-slate-500">Text</label><textarea x-model="a.text_content" rows="2" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono resize-none"></textarea></div>
+                            <div><label class="text-xs text-slate-500">Speed (ms/char)</label><input x-model.number="a.text_speed_ms" type="number" min="10" max="1000" step="10" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+                        </div>
+
+                        <!-- Common -->
+                        <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-700/50">
+                            <div><label class="text-xs text-slate-500">Wait Before (ms)</label><input x-model.number="a.wait_before_ms" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+                            <div><label class="text-xs text-slate-500">Wait After (ms)</label><input x-model.number="a.wait_after_ms" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+                        </div>
+
+                        <div class="flex justify-end mt-3 pt-3 border-t border-slate-700/50">
+                            <button @click="deleteAction(idx)" class="text-xs text-slate-500 hover:text-danger inline-flex items-center gap-1">🗑️ Remove</button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <div x-show="actions.length === 0" class="bg-surface-card border border-surface-border border-dashed rounded-xl p-12 text-center">
+                <span class="text-5xl mb-4 block">⚡</span>
+                <p class="text-slate-400 mb-2">Belum ada action</p>
+                <button @click="addAction()" class="inline-flex items-center gap-2 bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all text-sm">＋ Add First Action</button>
+            </div>
+        </div>
+
+        <div x-show="actions.length > 0" class="flex justify-end pt-2">
+            <button @click="save()" class="bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 text-sm">💾 <span x-text="isNew ? 'Create Script' : 'Save All Changes'"></span></button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let sortableInstance = null;
+    function scriptEditor() {
+        return {
+            isNew: true,
+            scriptId: null,
+            script: { name: '', description: '', repeat_count: 1, delay_between_ms: 1000 },
+            actions: [],
+            _counter: 100,
+            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text'],
+            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝'}[t]||'❓'; },
+            async init() {
+                const p = new URLSearchParams(window.location.search);
+                if (p.get('id')) {
+                    this.isNew = false; this.scriptId = p.get('id');
+                    const r = await fetch(`/api/scripts/${this.scriptId}`);
+                    const s = await r.json();
+                    this.script = { name: s.name, description: s.description||'', repeat_count: s.repeat_count, delay_between_ms: s.delay_between_ms };
+                    this.actions = (s.actions||[]).map(a => ({ ...a, _id: ++this._counter, _expanded: false }));
+                }
+                this.$nextTick(() => this.initSortable());
+            },
+            addAction() {
+                this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false });
+            },
+            deleteAction(idx) { this.actions.splice(idx, 1); },
+            async save() {
+                if (!this.script.name.trim()) return alert('Name required!');
+                const body = this.script;
+                let scriptId = this.scriptId;
+                if (this.isNew) {
+                    const r = await fetch('/api/scripts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+                    if (!r.ok) return alert('Failed to create script');
+                    const s = await r.json();
+                    scriptId = s.id; this.isNew = false; this.scriptId = scriptId;
+                    window.history.replaceState({}, '', '/scripts/'+scriptId+'/edit');
+                } else {
+                    await fetch(`/api/scripts/${scriptId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+                }
+                // Save all actions
+                const existing = this.isNew ? [] : await (await fetch(`/api/scripts/${scriptId}/actions`)).json();
+                for (const a of existing) {
+                    if (!this.actions.find(x => x.id === a.id)) {
+                        await fetch(`/api/scripts/${scriptId}/actions/${a.id}`, { method:'DELETE' });
+                    }
+                }
+                for (let i = 0; i < this.actions.length; i++) {
+                    const a = this.actions[i];
+                    const payload = {
+                        name: a.name, action_type: a.action_type,
+                        x: a.x, y: a.y, x2: a.x2, y2: a.y2, duration_ms: a.duration_ms,
+                        template_path: a.template_path, match_threshold: a.match_threshold,
+                        retry_count: a.retry_count, retry_delay_ms: a.retry_delay_ms,
+                        jump_on_success: a.jump_on_success, jump_on_fail: a.jump_on_fail,
+                        key_code: a.key_code, combo_action: a.combo_action,
+                        api_url: a.api_url, api_method: a.api_method, api_headers: '{}',
+                        api_body: '', api_save_to_var: a.api_save_to_var,
+                        var_name: a.var_name, var_operation: a.var_operation,
+                        var_value: a.var_value, text_content: a.text_content,
+                        text_speed_ms: a.text_speed_ms,
+                        use_match_result: !!a.use_match_result,
+                        wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,
+                        wait_after_ms: a.wait_after_ms,
+                    };
+                    if (a.id) {
+                        await fetch(`/api/scripts/${scriptId}/actions/${a.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+                    } else {
+                        const r = await fetch(`/api/scripts/${scriptId}/actions`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+                        if (r.ok) { const na = await r.json(); a.id = na.id; }
+                    }
+                }
+                alert('✅ Saved!');
+            },
+            initSortable() {
+                const el = document.getElementById('actions-list');
+                if (!el || sortableInstance) return;
+                sortableInstance = new Sortable(el, {
+                    handle: '.drag-handle', animation: 200,
+                    ghostClass: 'sortable-ghost', chosenClass: 'sortable-chosen',
+                    onEnd: (evt) => {
+                        const item = this.actions.splice(evt.oldIndex, 1)[0];
+                        this.actions.splice(evt.newIndex, 0, item);
+                    }
+                });
+            }
+        };
+    }
+</script>
+{% endblock %}

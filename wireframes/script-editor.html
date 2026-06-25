@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-NguLo — Script Editor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: { DEFAULT: '#0F172A', card: '#1E293B', border: '#334155', hover: '#263348' },
+                        brand: { DEFAULT: '#6366F1', hover: '#5558E6' },
+                        success: '#10B981', danger: '#EF4444', warning: '#F59E0B',
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+    <style>
+        * { font-family: 'Inter', system-ui, sans-serif; }
+        body { background: #0F172A; color: #F1F5F9; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1E293B; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+        .sortable-ghost { opacity: 0.4; background: #312E81 !important; border: 2px dashed #6366F1 !important; border-radius: 12px; }
+        .sortable-chosen { box-shadow: 0 0 20px rgba(99, 102, 241, 0.4); }
+        .drag-handle { cursor: grab; }
+        .drag-handle:active { cursor: grabbing; }
+
+        .action-card { transition: all 0.2s ease; }
+        .action-card:hover { border-color: #6366F1; }
+
+        .animate-slide { animation: slideDown 0.3s ease-out; }
+        @keyframes slideDown { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 500px; } }
+    </style>
+</head>
+<body class="min-h-screen" x-data="scriptEditor()" x-init="init()">
+
+    <!-- Navigation -->
+    <nav class="bg-slate-900/80 backdrop-blur-md border-b border-surface-border sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-4 flex items-center justify-between h-16">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-gradient-to-br from-brand to-purple-600 rounded-xl flex items-center justify-center shadow-sm shadow-brand/20">
+                    <span class="text-lg">🤖</span>
+                </div>
+                <span class="font-bold text-lg bg-gradient-to-r from-brand to-purple-400 bg-clip-text text-transparent">Auto-NguLo</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <a href="dashboard.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">📋 Scripts</a>
+                <a href="history.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">📜 History</a>
+                <a href="settings.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">⚙️ Settings</a>
+                <a href="login.html" class="px-4 py-2 text-slate-400 hover:text-danger hover:bg-red-500/10 rounded-lg text-sm font-medium transition-colors">🔒 Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-4 py-8">
+
+        <!-- Back + Title -->
+        <div class="flex items-center gap-3 mb-6">
+            <a href="dashboard.html" class="text-slate-400 hover:text-slate-200 transition-colors">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                </svg>
+            </a>
+            <h1 class="text-xl font-bold" x-text="isNew ? '➕ New Script' : '✏️ Edit Script'">➕ New Script</h1>
+            <span x-show="!isNew" class="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full font-mono">#<span x-text="scriptId"></span></span>
+        </div>
+
+        <!-- Save indicator -->
+        <div x-show="saved" x-transition
+             class="mb-4 bg-success/10 border border-success/30 text-success rounded-lg px-4 py-3 text-sm flex items-center gap-2">
+            <span>✅</span> <span x-text="saved"></span>
+        </div>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+
+            <!-- LEFT: Script Info Panel -->
+            <div class="lg:col-span-1">
+                <div class="bg-surface-card border border-surface-border rounded-2xl p-6 sticky top-24">
+                    <h2 class="font-semibold mb-5 flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-lg bg-brand/10 flex items-center justify-center">📋</span>
+                        Script Info
+                    </h2>
+
+                    <div class="mb-4">
+                        <label class="block text-xs font-medium text-slate-400 mb-1.5">Name *</label>
+                        <input x-model="script.name" type="text"
+                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                               placeholder="Nama script...">
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-xs font-medium text-slate-400 mb-1.5">Description</label>
+                        <textarea x-model="script.description" rows="2"
+                                  class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand resize-none"
+                                  placeholder="Deskripsi singkat..."></textarea>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-xs font-medium text-slate-400 mb-1.5">Repeat Count</label>
+                        <input x-model.number="script.repeat_count" type="number" min="1" max="999"
+                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-xs font-medium text-slate-400 mb-1.5">Delay Between Actions (ms)</label>
+                        <input x-model.number="script.delay_between_ms" type="number" min="0" max="60000" step="100"
+                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                    </div>
+
+                    <button @click="save()"
+                            class="w-full bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-4 py-3 transition-all shadow-lg shadow-brand/25 hover:shadow-brand/40 text-sm mt-2">
+                        💾 <span x-text="isNew ? 'Create Script' : 'Save Changes'"></span>
+                    </button>
+
+                    <div class="mt-6 pt-4 border-t border-surface-border">
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-slate-400">Total Actions</span>
+                            <span class="text-brand font-bold" x-text="script.actions.length + ' actions'"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: Actions List -->
+            <div class="lg:col-span-2 space-y-4">
+
+                <div class="flex items-center justify-between">
+                    <h2 class="font-semibold flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-lg bg-success/10 flex items-center justify-center">⚡</span>
+                        Actions
+                    </h2>
+                    <button @click="showActionModal = true"
+                            class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-sm font-semibold rounded-lg px-4 py-2.5 transition-colors shadow-sm shadow-success/20">
+                        ＋ Add Action
+                    </button>
+                </div>
+
+                <!-- Drag & Drop Area -->
+                <div id="actions-list" class="space-y-3">
+                    <template x-for="(action, idx) in script.actions" :key="action._id">
+                        <div :data-id="action._id"
+                             class="action-card bg-surface-card border border-surface-border rounded-xl overflow-hidden group">
+                            <!-- Header -->
+                            <div class="flex items-center gap-3 p-4 cursor-pointer" @click="action._expanded = !action._expanded">
+                                <span class="drag-handle text-slate-600 group-hover:text-slate-400 transition-colors shrink-0">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M8 6h2v2H8V6zm6 0h2v2h-2V6zM8 11h2v2H8v-2zm6 0h2v2h-2v-2zm-6 5h2v2H8v-2zm6 0h2v2h-2v-2z"/>
+                                    </svg>
+                                </span>
+                                <span class="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400 font-mono shrink-0" x-text="idx + 1"></span>
+                                <span class="text-lg" x-text="action._icon"></span>
+                                <div class="flex-1 min-w-0">
+                                    <span class="text-sm font-medium text-slate-200" x-text="action._label"></span>
+                                    <span class="text-xs text-slate-500 ml-2" x-text="action._detail"></span>
+                                </div>
+                                <svg :class="action._expanded ? 'rotate-180' : ''"
+                                     class="w-4 h-4 text-slate-500 transition-transform shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </div>
+
+                            <!-- Expanded Editor -->
+                            <div x-show="action._expanded" x-transition
+                                 class="border-t border-surface-border bg-slate-900/50 px-4 py-4 animate-slide"
+                                 @click.away="action._expanded = false">
+
+                                <!-- Action Name (unix-style) -->
+                                <div class="mb-4">
+                                    <label class="block text-xs font-medium text-slate-400 mb-1.5">Action Name <span class="text-slate-500">(unique, lowercase_underscore)</span></label>
+                                    <input x-model="action.name" type="text"
+                                           @input="action.name = action.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')"
+                                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                                           placeholder="e.g. login_tap_btn">
+                                    <p x-show="nameError(action)" class="text-xs text-danger mt-1">Nama sudah dipakai action lain!</p>
+                                </div>
+
+                                <!-- Action Type -->
+                                <div class="mb-4">
+                                    <label class="block text-xs font-medium text-slate-500 mb-2">Action Type</label>
+                                    <div class="grid grid-cols-5 gap-1.5">
+                                        <button @click="setActionType(action, 'tap')"
+                                                :class="action.type === 'tap' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">👆<br>Tap</button>
+                                        <button @click="setActionType(action, 'swipe')"
+                                                :class="action.type === 'swipe' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">↔️<br>Swipe</button>
+                                        <button @click="setActionType(action, 'long_press')"
+                                                :class="action.type === 'long_press' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">⏳<br>LongPrs</button>
+                                        <button @click="setActionType(action, 'screenshot_match')"
+                                                :class="action.type === 'screenshot_match' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">🖼️<br>Match</button>
+                                        <button @click="setActionType(action, 'wait')"
+                                                :class="action.type === 'wait' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">⏱️<br>Wait</button>
+                                        <button @click="setActionType(action, 'push_key')"
+                                                :class="action.type === 'push_key' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">⌨️<br>PushKey</button>
+                                        <button @click="setActionType(action, 'combo')"
+                                                :class="action.type === 'combo' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">🔀<br>Combo</button>
+                                        <button @click="setActionType(action, 'fetch_api')"
+                                                :class="action.type === 'fetch_api' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">🌐<br>API</button>
+                                        <button @click="setActionType(action, 'variable')"
+                                                :class="action.type === 'variable' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">📦<br>Var</button>
+                                        <button @click="setActionType(action, 'type_text')"
+                                                :class="action.type === 'type_text' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight">📝<br>TypeTxt</button>
+                                    </div>
+                                </div>
+
+                                <!-- ==================== TAP / LONG PRESS ==================== -->
+                                <div x-show="action.type === 'tap' || action.type === 'long_press'" class="space-y-3 mb-4">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-500 mb-1">X <span x-show="action.use_match_result" class="text-slate-600">(auto from match)</span></label>
+                                            <input x-model.number="action.x" :disabled="action.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40">
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-500 mb-1">Y</label>
+                                            <input x-model.number="action.y" :disabled="action.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40">
+                                        </div>
+                                    </div>
+                                    <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                                        <input type="checkbox" x-model="action.use_match_result" class="rounded bg-slate-800 border-surface-border text-brand focus:ring-brand"> Use result from previous Match action
+                                    </label>
+                                    <button @click="openPicker(action._id)" x-show="!action.use_match_result" class="text-xs text-brand hover:underline inline-flex items-center gap-1">📸 Pick from screenshot</button>
+                                    <div x-show="action.type === 'long_press'">
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Duration (ms)</label>
+                                        <input x-model.number="action.duration_ms" type="number" min="100" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    </div>
+                                </div>
+
+                                <!-- ==================== SWIPE ==================== -->
+                                <div x-show="action.type === 'swipe'" class="space-y-3 mb-4">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div><label class="block text-xs font-medium text-slate-500 mb-1">From X</label><input x-model.number="action.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                        <div><label class="block text-xs font-medium text-slate-500 mb-1">From Y</label><input x-model.number="action.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                        <div><label class="block text-xs font-medium text-slate-500 mb-1">To X</label><input x-model.number="action.x2" type="number" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                        <div><label class="block text-xs font-medium text-slate-500 mb-1">To Y</label><input x-model.number="action.y2" type="number" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Duration (ms)</label>
+                                        <input x-model.number="action.duration_ms" type="number" min="50" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    </div>
+                                </div>
+
+                                <!-- ==================== SCREENSHOT MATCH (with retry + jump) ==================== -->
+                                <div x-show="action.type === 'screenshot_match'" class="space-y-3 mb-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Template Image</label>
+                                        <div class="flex items-center gap-2">
+                                            <input x-model="action.template_path" type="text" readonly
+                                                   class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono"
+                                                   placeholder="Pilih gambar template...">
+                                            <button class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0">📁 Browse</button>
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-500 mb-1">Threshold (0-1)</label>
+                                            <input x-model.number="action.match_threshold" type="number" min="0" max="1" step="0.05"
+                                                   class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-500 mb-1">Retry Count</label>
+                                            <input x-model.number="action.retry_count" type="number" min="1" max="99"
+                                                   class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                            <p class="text-xs text-slate-600 mt-0.5">Berapa kali coba ulang</p>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Retry Delay (ms)</label>
+                                        <input x-model.number="action.retry_delay_ms" type="number" min="0" step="100"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                        <p class="text-xs text-slate-600 mt-0.5">Delay antar percobaan ulang</p>
+                                    </div>
+
+                                    <!-- Jump logic -->
+                                    <div class="bg-slate-800/50 rounded-xl p-3 border border-slate-700/30 space-y-2">
+                                        <p class="text-xs text-warning font-medium mb-2">🔀 Conditional Jump (by action name)</p>
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-xs font-medium text-success mb-1">✅ If Success → jump to</label>
+                                                <div class="flex items-center gap-2">
+                                                    <input x-model="action.jump_on_success" type="text" :list="'names_'+action._id"
+                                                           class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-success"
+                                                           placeholder="action_name (empty=next)">
+                                                    <datalist :id="'names_'+action._id">
+                                                        <template x-for="a in script.actions.filter(x=>x._id!==action._id)" :key="a._id">
+                                                            <option :value="a.name" x-text="a.name + ' — ' + a._label"></option>
+                                                        </template>
+                                                    </datalist>
+                                                </div>
+                                                <p class="text-xs text-slate-600 mt-0.5">Kosongkan = lanjut action berikutnya</p>
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs font-medium text-danger mb-1">❌ If Fail → jump to</label>
+                                                <div class="flex items-center gap-2">
+                                                    <input x-model="action.jump_on_fail" type="text" :list="'names_'+action._id"
+                                                           class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-danger"
+                                                           placeholder="action_name (empty=stop)">
+                                                </div>
+                                                <p class="text-xs text-slate-600 mt-0.5">Kosongkan = stop execution dengan error</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="bg-slate-800 border border-dashed border-slate-600 rounded-lg h-24 flex items-center justify-center text-slate-500 text-sm">🖼️ Template preview</div>
+                                </div>
+
+                                <!-- ==================== WAIT ==================== -->
+                                <div x-show="action.type === 'wait'" class="mb-4">
+                                    <label class="block text-xs font-medium text-slate-500 mb-1">Duration (ms)</label>
+                                    <input x-model.number="action.wait_ms" type="number" min="0"
+                                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                </div>
+
+                                <!-- ==================== PUSH KEY ==================== -->
+                                <div x-show="action.type === 'push_key'" class="space-y-3 mb-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Android Key Code</label>
+                                        <select x-model="action.key_code"
+                                                class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                            <optgroup label="Navigation">
+                                                <option value="HOME">HOME</option>
+                                                <option value="BACK">BACK</option>
+                                                <option value="RECENTS">RECENTS / APP_SWITCH</option>
+                                                <option value="MENU">MENU</option>
+                                            </optgroup>
+                                            <optgroup label="Volume">
+                                                <option value="VOLUME_UP">VOLUME_UP</option>
+                                                <option value="VOLUME_DOWN">VOLUME_DOWN</option>
+                                                <option value="VOLUME_MUTE">VOLUME_MUTE</option>
+                                            </optgroup>
+                                            <optgroup label="Media">
+                                                <option value="MEDIA_PLAY">MEDIA_PLAY</option>
+                                                <option value="MEDIA_PAUSE">MEDIA_PAUSE</option>
+                                                <option value="MEDIA_NEXT">MEDIA_NEXT</option>
+                                                <option value="MEDIA_PREVIOUS">MEDIA_PREVIOUS</option>
+                                            </optgroup>
+                                            <optgroup label="Power & Others">
+                                                <option value="POWER">POWER</option>
+                                                <option value="CAMERA">CAMERA</option>
+                                                <option value="SEARCH">SEARCH</option>
+                                                <option value="ENTER">ENTER</option>
+                                                <option value="DEL">DELETE / BACKSPACE</option>
+                                                <option value="TAB">TAB</option>
+                                                <option value="ESCAPE">ESCAPE</option>
+                                            </optgroup>
+                                            <optgroup label="DPad">
+                                                <option value="DPAD_UP">DPAD_UP</option>
+                                                <option value="DPAD_DOWN">DPAD_DOWN</option>
+                                                <option value="DPAD_LEFT">DPAD_LEFT</option>
+                                                <option value="DPAD_RIGHT">DPAD_RIGHT</option>
+                                                <option value="DPAD_CENTER">DPAD_CENTER</option>
+                                            </optgroup>
+                                            <optgroup label="Custom">
+                                                <option value="CUSTOM">CUSTOM (specify below)</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                    <div x-show="action.key_code === 'CUSTOM'">
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Custom Key Code (integer)</label>
+                                        <input x-model="action._custom_key" type="text"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                                               placeholder="e.g. 66 = ENTER">
+                                    </div>
+                                </div>
+
+                                <!-- ==================== COMBO ACTION ==================== -->
+                                <div x-show="action.type === 'combo'" class="space-y-3 mb-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Combo Action</label>
+                                        <select x-model="action.combo_action"
+                                                class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                            <option value="select_all">Select All (Ctrl+A)</option>
+                                            <option value="copy">Copy (Ctrl+C)</option>
+                                            <option value="cut">Cut (Ctrl+X)</option>
+                                            <option value="paste">Paste (Ctrl+V)</option>
+                                            <option value="undo">Undo (Ctrl+Z)</option>
+                                            <option value="redo">Redo (Ctrl+Shift+Z)</option>
+                                            <option value="find">Find (Ctrl+F)</option>
+                                            <option value="save">Save (Ctrl+S)</option>
+                                            <option value="screenshot">Screenshot (Power+VolDown)</option>
+                                            <option value="switch_app">Switch App (Alt+Tab)</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <!-- ==================== FETCH API ==================== -->
+                                <div x-show="action.type === 'fetch_api'" class="space-y-3 mb-4">
+                                    <div class="grid grid-cols-4 gap-2">
+                                        <div class="col-span-1">
+                                            <label class="block text-xs font-medium text-slate-500 mb-1">Method</label>
+                                            <select x-model="action.api_method"
+                                                    class="w-full bg-slate-800 border border-surface-border rounded-lg px-2 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                                <option value="GET">GET</option>
+                                                <option value="POST">POST</option>
+                                                <option value="PUT">PUT</option>
+                                                <option value="DELETE">DELETE</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-span-3">
+                                            <label class="block text-xs font-medium text-slate-500 mb-1">URL</label>
+                                            <input x-model="action.api_url" type="text"
+                                                   class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                                                   placeholder="https://api.example.com/data">
+                                        </div>
+                                    </div>
+                                    <div x-show="action.api_method === 'POST' || action.api_method === 'PUT'">
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Headers (JSON)</label>
+                                        <textarea x-model="action.api_headers" rows="2"
+                                                  class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand resize-none"
+                                                  placeholder='{"Content-Type": "application/json"}'></textarea>
+                                    </div>
+                                    <div x-show="action.api_method === 'POST' || action.api_method === 'PUT'">
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Body (JSON)</label>
+                                        <textarea x-model="action.api_body" rows="3"
+                                                  class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand resize-none"
+                                                  placeholder='{"key": "value"}'></textarea>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Save Response to Variable</label>
+                                        <input x-model="action.api_save_to_var" type="text"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                                               placeholder="variable_name (optional)">
+                                        <p class="text-xs text-slate-600 mt-0.5">Hasil response akan disimpan ke variable ini</p>
+                                    </div>
+                                </div>
+
+                                <!-- ==================== VARIABLE ==================== -->
+                                <div x-show="action.type === 'variable'" class="space-y-3 mb-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Variable Name</label>
+                                        <input x-model="action.var_name" type="text"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                                               placeholder="my_variable">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Operation</label>
+                                        <div class="grid grid-cols-3 gap-2">
+                                            <button @click="action.var_operation = 'set'"
+                                                    :class="action.var_operation === 'set' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                    class="border rounded-lg p-2 text-xs text-center transition-all">📥 Set</button>
+                                            <button @click="action.var_operation = 'update'"
+                                                    :class="action.var_operation === 'update' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                    class="border rounded-lg p-2 text-xs text-center transition-all">🔄 Update</button>
+                                            <button @click="action.var_operation = 'get'"
+                                                    :class="action.var_operation === 'get' ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'"
+                                                    class="border rounded-lg p-2 text-xs text-center transition-all">📤 Get & Use</button>
+                                        </div>
+                                    </div>
+                                    <div x-show="action.var_operation === 'set' || action.var_operation === 'update'">
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Value</label>
+                                        <input x-model="action.var_value" type="text"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                                               placeholder="value or ${other_var}">
+                                        <p class="text-xs text-slate-600 mt-0.5">Gunakan <code class="text-brand">${var_name}</code> untuk referensi variable lain</p>
+                                    </div>
+                                </div>
+
+                                <!-- ==================== TYPE TEXT ==================== -->
+                                <div x-show="action.type === 'type_text'" class="space-y-3 mb-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Text Content</label>
+                                        <textarea x-model="action.text_content" rows="3"
+                                                  class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand resize-none"
+                                                  placeholder="Teks yang akan diketik... bisa pakai ${var_name}"></textarea>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Typing Speed (ms per character)</label>
+                                        <input x-model.number="action.text_speed_ms" type="number" min="10" max="1000" step="10"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                        <p class="text-xs text-slate-600 mt-0.5">Delay antar karakter untuk simulasi mengetik natural</p>
+                                    </div>
+                                </div>
+
+                                <!-- Common waits -->
+                                <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-700/50">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Wait Before (ms)</label>
+                                        <input x-model.number="action.wait_before_ms" type="number" min="0"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-500 mb-1">Wait After (ms)</label>
+                                        <input x-model.number="action.wait_after_ms" type="number" min="0"
+                                               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    </div>
+                                </div>
+
+                                <div class="flex justify-end mt-4 pt-3 border-t border-slate-700/50">
+                                    <button @click="deleteAction(idx)" class="text-xs text-slate-500 hover:text-danger transition-colors inline-flex items-center gap-1">🗑️ Remove</button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="script.actions.length === 0"
+                     class="bg-surface-card border border-surface-border border-dashed rounded-xl p-12 text-center">
+                    <span class="text-5xl mb-4 block">⚡</span>
+                    <p class="text-slate-400 mb-2">Belum ada action</p>
+                    <p class="text-slate-500 text-sm mb-4">Tambahkan action untuk memulai script</p>
+                    <button @click="showActionModal = true"
+                            class="inline-flex items-center gap-2 bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all text-sm">＋ Add First Action</button>
+                </div>
+
+                <!-- Bottom Save -->
+                <div x-show="script.actions.length > 0" class="flex justify-end pt-2">
+                    <button @click="save()"
+                            class="bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 hover:shadow-brand/40 text-sm">
+                        💾 <span x-text="isNew ? 'Create Script' : 'Save All Changes'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Add Action Modal -->
+    <div x-show="showActionModal" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+         @click.self="showActionModal = false">
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <h3 class="text-lg font-semibold mb-4">➕ Add New Action</h3>
+            <p class="text-sm text-slate-400 mb-4">Pilih tipe aksi:</p>
+            <div class="grid grid-cols-1 gap-2 max-h-[60vh] overflow-y-auto pr-1">
+                <button @click="addAction('tap'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">👆</span><div><span class="font-medium text-slate-200">Tap</span><p class="text-xs text-slate-500">Tap di koordinat tertentu</p></div>
+                </button>
+                <button @click="addAction('swipe'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">↔️</span><div><span class="font-medium text-slate-200">Swipe</span><p class="text-xs text-slate-500">Geser dari titik A ke B</p></div>
+                </button>
+                <button @click="addAction('long_press'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">⏳</span><div><span class="font-medium text-slate-200">Long Press</span><p class="text-xs text-slate-500">Tekan lama di koordinat</p></div>
+                </button>
+                <button @click="addAction('screenshot_match'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">🖼️</span><div><span class="font-medium text-slate-200">Screenshot Match</span><p class="text-xs text-slate-500">Cocokkan gambar dari screenshot + retry & jump</p></div>
+                </button>
+                <button @click="addAction('wait'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">⏱️</span><div><span class="font-medium text-slate-200">Wait</span><p class="text-xs text-slate-500">Delay / jeda waktu</p></div>
+                </button>
+                <!-- NEW -->
+                <div class="border-t border-surface-border my-1"></div>
+                <button @click="addAction('push_key'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">⌨️</span><div><span class="font-medium text-slate-200">Push Key</span><p class="text-xs text-slate-500">Tekan tombol Android (HOME, BACK, VOLUME, dll)</p></div>
+                </button>
+                <button @click="addAction('combo'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">🔀</span><div><span class="font-medium text-slate-200">Combo Action</span><p class="text-xs text-slate-500">Select All, Copy, Paste, Undo, dll</p></div>
+                </button>
+                <button @click="addAction('fetch_api'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">🌐</span><div><span class="font-medium text-slate-200">Fetch API</span><p class="text-xs text-slate-500">Ambil data dari API URL + simpan ke variable</p></div>
+                </button>
+                <button @click="addAction('variable'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">📦</span><div><span class="font-medium text-slate-200">Variable</span><p class="text-xs text-slate-500">Set / Update / Get variable</p></div>
+                </button>
+                <button @click="addAction('type_text'); showActionModal = false"
+                        class="flex items-center gap-3 bg-slate-800 hover:bg-slate-700 border border-surface-border hover:border-brand rounded-xl p-3 transition-all text-left">
+                    <span class="text-2xl">📝</span><div><span class="font-medium text-slate-200">Type Text</span><p class="text-xs text-slate-500">Simulasi mengetik normal (per karakter)</p></div>
+                </button>
+            </div>
+            <button @click="showActionModal = false"
+                    class="w-full mt-4 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg py-2.5 text-sm transition-colors">Batal</button>
+        </div>
+    </div>
+
+    <!-- Screenshot Picker Modal -->
+    <div x-show="showPicker" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+         @click.self="showPicker = null; pickedCoord = null">
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 max-w-lg w-full shadow-2xl">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="font-semibold">📸 Pick Coordinate from Screenshot</h3>
+                <button @click="showPicker = null; pickedCoord = null" class="text-slate-400 hover:text-slate-200">✕</button>
+            </div>
+            <div class="bg-slate-800 border border-surface-border rounded-xl aspect-[9/19.5] relative overflow-hidden cursor-crosshair mb-4"
+                 @click="pickCoordinate($event)">
+                <div class="absolute inset-0 flex items-center justify-center">
+                    <div class="text-center">
+                        <span class="text-6xl block mb-2">📱</span>
+                        <p class="text-slate-500 text-sm">[Screenshot Preview]</p>
+                        <p class="text-slate-600 text-xs mt-1">Click anywhere to pick coordinate</p>
+                    </div>
+                </div>
+                <div x-show="pickedCoord"
+                     :style="'left:' + pickedCoord.x + 'px; top:' + pickedCoord.y + 'px'"
+                     class="absolute w-6 h-6 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                    <div class="w-full h-0.5 bg-brand absolute top-1/2 -translate-y-1/2"></div>
+                    <div class="h-full w-0.5 bg-brand absolute left-1/2 -translate-x-1/2"></div>
+                </div>
+            </div>
+            <div x-show="pickedCoord" class="text-center mb-4 text-sm text-slate-300">
+                X: <span class="text-brand font-mono" x-text="pickedCoord.x"></span>,
+                Y: <span class="text-brand font-mono" x-text="pickedCoord.y"></span>
+            </div>
+            <div class="flex gap-3">
+                <button @click="showPicker = null; pickedCoord = null"
+                        class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg py-2.5 text-sm transition-colors">Batal</button>
+                <button @click="applyCoordinate(); showPicker = null; pickedCoord = null"
+                        :disabled="!pickedCoord"
+                        class="flex-1 bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg py-2.5 text-sm transition-colors">✅ Use Coordinate</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sortableInstance = null;
+
+        function scriptEditor() {
+            return {
+                isNew: true,
+                scriptId: null,
+                saved: '',
+                showActionModal: false,
+                showPicker: null,
+                pickedCoord: null,
+                pickedForId: null,
+                _idCounter: 100,
+
+                script: {
+                    name: '',
+                    description: '',
+                    repeat_count: 1,
+                    delay_between_ms: 1000,
+                    actions: []
+                },
+
+                init() {
+                    const params = new URLSearchParams(window.location.search);
+                    if (params.get('id')) {
+                        this.isNew = false;
+                        this.scriptId = params.get('id');
+                        this.script = {
+                            name: 'Login Instagram',
+                            description: 'Auto login ke Instagram dengan screenshot matching',
+                            repeat_count: 1,
+                            delay_between_ms: 1000,
+                            actions: [
+                                this.make('screenshot_match', { template_path: 'login_btn.png', match_threshold: 0.80 }),
+                                this.make('tap', { x: 0, y: 0, use_match_result: true }),
+                                this.make('tap', { x: 540, y: 960 }),
+                                this.make('wait', { wait_ms: 2000 }),
+                            ]
+                        };
+                    }
+                    this.$nextTick(() => this.initSortable());
+                },
+
+                make(type, overrides = {}) {
+                    const name = overrides.name || (type + '_' + this._idCounter);
+                    const a = {
+                        _id: ++this._idCounter, _expanded: false, type,
+                        name: name,           // unix-style unique action name
+                        x: null, y: null, x2: null, y2: null,
+                        duration_ms: 300,
+                        // screenshot match
+                        template_path: '', match_threshold: 0.80,
+                        retry_count: 1, retry_delay_ms: 1000,
+                        jump_on_success: '', jump_on_fail: '',
+                        // push key
+                        key_code: 'HOME',
+                        // combo action
+                        combo_action: 'select_all',
+                        // fetch api
+                        api_url: '', api_method: 'GET', api_headers: '', api_body: '',
+                        api_save_to_var: '',
+                        // variable
+                        var_name: '', var_operation: 'set', var_value: '',
+                        // type text
+                        text_content: '', text_speed_ms: 50,
+                        // common
+                        wait_ms: 1000, wait_before_ms: 500, wait_after_ms: 500,
+                        use_match_result: false,
+                    };
+                    Object.assign(a, overrides);
+                    this.syncDisplay(a);
+                    return a;
+                },
+
+                displayFor(a) {
+                    const nm = a.name ? ` [${a.name}]` : '';
+                    switch (a.type) {
+                        case 'tap': return a.use_match_result ? { icon: '🎯', label: 'Tap on Match'+nm, detail: 'from screenshot match' } : { icon: '👆', label: 'Tap'+nm, detail: `(${a.x}, ${a.y})` };
+                        case 'swipe': return { icon: '↔️', label: 'Swipe'+nm, detail: `(${a.x},${a.y})→(${a.x2},${a.y2}) ${a.duration_ms}ms` };
+                        case 'long_press': return { icon: '⏳', label: 'Long Press'+nm, detail: `(${a.x}, ${a.y}) ${a.duration_ms}ms` };
+                        case 'screenshot_match': return { icon: '🖼️', label: 'Match'+nm, detail: a.template_path || 'no template' };
+                        case 'wait': return { icon: '⏱️', label: 'Wait'+nm, detail: `${a.wait_ms}ms` };
+                        case 'push_key': return { icon: '⌨️', label: 'Push Key'+nm, detail: `KEYCODE_${a.key_code}` };
+                        case 'combo': return { icon: '🔀', label: 'Combo'+nm, detail: `${a.combo_action}` };
+                        case 'fetch_api': return { icon: '🌐', label: 'Fetch API'+nm, detail: a.api_url || `${a.api_method} ...` };
+                        case 'variable': return { icon: '📦', label: 'Variable'+nm, detail: `${a.var_operation} $${a.var_name || '?'}` };
+                        case 'type_text': return { icon: '📝', label: 'Type Text'+nm, detail: a.text_content ? `"${a.text_content.substring(0,30)}"` : 'empty' };
+                        default: return { icon: '❓', label: 'Unknown', detail: '' };
+                    }
+                },
+
+                syncDisplay(a) {
+                    const d = this.displayFor(a);
+                    a._icon = d.icon; a._label = d.label; a._detail = d.detail;
+                },
+
+                setActionType(a, t) { a.type = t; this.syncDisplay(a); },
+
+                addAction(type) {
+                    const a = this.make(type);
+                    this.script.actions.push(a);
+                },
+
+                deleteAction(idx) { this.script.actions.splice(idx, 1); },
+
+                openPicker(actionId) {
+                    this.showPicker = actionId;
+                    this.pickedForId = actionId;
+                },
+
+                pickCoordinate(evt) {
+                    const r = evt.currentTarget.getBoundingClientRect();
+                    this.pickedCoord = { x: Math.round(evt.clientX - r.left), y: Math.round(evt.clientY - r.top) };
+                },
+
+                applyCoordinate() {
+                    if (!this.pickedCoord || !this.pickedForId) return;
+                    const a = this.script.actions.find(x => x._id === this.pickedForId);
+                    if (a) { a.x = this.pickedCoord.x; a.y = this.pickedCoord.y; this.syncDisplay(a); }
+                },
+
+                initSortable() {
+                    const el = document.getElementById('actions-list');
+                    if (!el || sortableInstance) return;
+                    sortableInstance = new Sortable(el, {
+                        handle: '.drag-handle',
+                        animation: 200,
+                        ghostClass: 'sortable-ghost',
+                        chosenClass: 'sortable-chosen',
+                        onEnd: (evt) => {
+                            const item = this.script.actions.splice(evt.oldIndex, 1)[0];
+                            this.script.actions.splice(evt.newIndex, 0, item);
+                        }
+                    });
+                },
+
+                save() {
+                    // Validate unique action names
+                    const names = this.script.actions.map(a => a.name).filter(Boolean);
+                    const dupes = names.filter((n, i) => names.indexOf(n) !== i);
+                    if (dupes.length > 0) {
+                        alert('Nama action duplikat: ' + dupes.join(', ') + '. Setiap action harus punya nama unik!');
+                        return;
+                    }
+                    if (!this.script.name.trim()) {
+                        alert('Nama script wajib diisi!');
+                        return;
+                    }
+                    this.saved = '✅ Script tersimpan!';
+                    setTimeout(() => this.saved = '', 3000);
+                },
+
+                nameError(action) {
+                    if (!action.name) return false;
+                    return this.script.actions.some(a => a._id !== action._id && a.name === action.name);
+                }
+            };
+        }
+    </script>
+
+</body>
+</html>

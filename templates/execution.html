@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Execution{% endblock %}
+{% block head_extra %}
+<style>
+    .font-mono-custom { font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; }
+    @keyframes pulse-dot { 0%,100%{opacity:1}50%{opacity:0.3} }
+    .pulse-dot { animation: pulse-dot 1s ease-in-out infinite; }
+    .pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+    .pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+    .progress-bar { transition: width 0.3s ease; background: linear-gradient(90deg, #6366F1, #8B5CF6); }
+    @keyframes logEntry { from { opacity:0; transform:translateX(-10px); } to { opacity:1; transform:translateX(0); } }
+    .log-entry { animation: logEntry 0.4s ease-out; }
+</style>
+{% endblock %}
+{% block content %}
+
+<a href="/dashboard" class="inline-flex items-center gap-2 text-slate-400 hover:text-slate-200 text-sm mb-6">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg> Back to Scripts
+</a>
+
+<div class="bg-surface-card border border-surface-border rounded-2xl overflow-hidden shadow-2xl" x-data="execution()" x-init="start()">
+    <div class="p-6 border-b border-surface-border">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            <div>
+                <h1 class="text-xl font-bold" x-text="scriptName">▶️ Running Script</h1>
+                <p class="text-sm text-slate-400 mt-1">Status: <span x-show="status==='running'" class="text-warning font-medium">⚡ Running</span><span x-show="status==='success'" class="text-success font-medium">✅ Completed</span><span x-show="status==='stopped'" class="text-danger font-medium">⏹️ Stopped</span><span x-show="status==='failed'" class="text-danger font-medium">❌ Failed</span></p>
+            </div>
+            <div class="flex gap-2">
+                <button x-show="status==='running'" @click="stop()" class="bg-danger hover:bg-red-600 text-white font-semibold rounded-lg px-4 py-2.5 text-sm shadow-sm shadow-danger/20">⏹️ STOP</button>
+                <button x-show="status!=='running'" @click="rerun()" class="bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-4 py-2.5 text-sm shadow-sm shadow-brand/20">🔄 Rerun</button>
+            </div>
+        </div>
+        <div class="mb-2 flex items-center justify-between text-sm">
+            <span class="text-slate-400" x-text="'Action ' + currentAction + '/' + totalActions"></span>
+            <span class="text-brand font-mono font-bold" x-text="Math.round(totalActions>0?(currentAction/totalActions*100):0) + '%'"></span>
+        </div>
+        <div class="h-2.5 bg-slate-800 rounded-full overflow-hidden"><div class="h-full progress-bar rounded-full" :style="'width:'+(totalActions>0?(currentAction/totalActions*100):0)+'%'"></div></div>
+        <div x-show="status==='running'" class="mt-4 bg-slate-800/50 rounded-xl p-4 border border-slate-700/30 flex items-center gap-3">
+            <div class="flex gap-1 shrink-0"><span class="w-2 h-2 bg-brand rounded-full pulse-dot"></span><span class="w-2 h-2 bg-brand rounded-full pulse-dot"></span><span class="w-2 h-2 bg-brand rounded-full pulse-dot"></span></div>
+            <div class="min-w-0"><p class="text-sm font-medium text-slate-200 truncate" x-text="currentActionLabel"></p><p class="text-xs text-slate-500 truncate" x-text="currentActionDetail"></p></div>
+        </div>
+    </div>
+
+    <div class="p-6">
+        <div class="flex items-center justify-between mb-3"><h2 class="font-semibold">📋 Live Log</h2><div class="flex gap-2"><span x-show="status==='running'" class="text-xs text-slate-500 flex items-center gap-1"><span class="w-1.5 h-1.5 bg-success rounded-full animate-pulse"></span> Streaming</span><button @click="copyLogs()" class="text-xs text-slate-500 hover:text-slate-300">📋 Copy</button><button @click="logs=[]" class="text-xs text-slate-500 hover:text-slate-300">🗑️ Clear</button></div></div>
+        <div id="logContainer" class="bg-[#0A0E1A] border border-surface-border rounded-xl p-4 h-96 overflow-y-auto font-mono-custom text-xs leading-relaxed" x-html="logsHTML()"></div>
+    </div>
+
+    <div x-show="status!=='running' && totalActions>0" x-transition class="border-t border-surface-border px-6 py-4 bg-slate-900/50">
+        <div class="grid grid-cols-4 gap-4 text-center">
+            <div><p class="text-2xl font-bold text-slate-200" x-text="totalActions"></p><p class="text-xs text-slate-500">Total</p></div>
+            <div><p class="text-2xl font-bold text-success" x-text="successCount"></p><p class="text-xs text-slate-500">Success</p></div>
+            <div><p class="text-2xl font-bold text-danger" x-text="failCount"></p><p class="text-xs text-slate-500">Failed</p></div>
+            <div><p class="text-2xl font-bold text-slate-200" x-text="elapsedTime+'s'"></p><p class="text-xs text-slate-500">Duration</p></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function execution() {
+        return {
+            scriptName: 'Loading...', status: 'running', currentAction: 0, totalActions: 0,
+            currentActionLabel: '', currentActionDetail: '', logs: [], successCount: 0, failCount: 0,
+            elapsedTime: 0, _timer: null, _startTime: 0, _logId: null, _scriptId: null, _eventSource: null,
+            async start() {
+                this._scriptId = window.location.pathname.split('/').pop();
+                const r = await fetch(`/api/scripts/${this._scriptId}/execute`, { method:'POST' });
+                const d = await r.json();
+                this._logId = d.log_id; this.scriptName = 'Script #' + this._scriptId; this._startTime = Date.now();
+                this._timer = setInterval(() => { if (this.status==='running') this.elapsedTime = Math.round((Date.now()-this._startTime)/1000); }, 250);
+                this.connectSSE(d.stream_url);
+            },
+            connectSSE(url) {
+                this._eventSource = new EventSource(url);
+                this._eventSource.onmessage = (e) => {
+                    const entry = JSON.parse(e.data);
+                    this.logs.push(entry);
+                    if (entry.level === 'success') { this.successCount++; this.currentAction++; }
+                    if (entry.level === 'error') this.failCount++;
+                    this.$nextTick(() => { const el = document.getElementById('logContainer'); if (el) el.scrollTop = el.scrollHeight; });
+                };
+                this._eventSource.addEventListener('done', (e) => {
+                    const d = JSON.parse(e.data);
+                    this.status = d.status;
+                    this.elapsedTime = Math.round((Date.now()-this._startTime)/1000);
+                    this.currentActionLabel = ''; this.currentActionDetail = '';
+                    clearInterval(this._timer);
+                    this._eventSource.close();
+                });
+            },
+            async stop() {
+                if (this._logId) await fetch(`/api/scripts/${this._scriptId}/execute/${this._logId}/stop`, { method:'POST' });
+                if (this._eventSource) this._eventSource.close();
+                this.status = 'stopped'; clearInterval(this._timer);
+            },
+            rerun() { if (this._eventSource) this._eventSource.close(); clearInterval(this._timer); this.start(); },
+            logsHTML() {
+                if (!this.logs.length) return '<div class="text-slate-600 text-center py-8">Waiting for execution...</div>';
+                return this.logs.map(l => {
+                    let c = 'text-slate-400'; if (l.level==='success') c='text-green-400'; if (l.level==='error') c='text-red-400'; if (l.level==='info') c='text-slate-300';
+                    return `<div class="log-entry py-0.5"><span class="text-slate-600">[${l.time}]</span> <span class="${c}">${l.message}</span></div>`;
+                }).join('');
+            },
+            copyLogs() { const t = this.logs.map(l=>`[${l.time}] ${l.message}`).join('\n'); navigator.clipboard.writeText(t); }
+        };
+    }
+</script>
+{% endblock %}

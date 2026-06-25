@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-NguLo — Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: { DEFAULT: '#0F172A', card: '#1E293B', border: '#334155', hover: '#263348' },
+                        brand: { DEFAULT: '#6366F1', hover: '#5558E6' },
+                        success: '#10B981', danger: '#EF4444', warning: '#F59E0B',
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        * { font-family: 'Inter', system-ui, sans-serif; }
+        body { background: #0F172A; color: #F1F5F9; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1E293B; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .animate-slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="min-h-screen" x-data="dashboard()">
+
+    <!-- Navigation -->
+    <nav class="bg-slate-900/80 backdrop-blur-md border-b border-surface-border sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-4 flex items-center justify-between h-16">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-gradient-to-br from-brand to-purple-600 rounded-xl flex items-center justify-center shadow-sm shadow-brand/20">
+                    <span class="text-lg">🤖</span>
+                </div>
+                <span class="font-bold text-lg bg-gradient-to-r from-brand to-purple-400 bg-clip-text text-transparent">Auto-NguLo</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <a href="dashboard.html" class="px-4 py-2 bg-brand/10 text-brand rounded-lg text-sm font-medium">📋 Scripts</a>
+                <a href="history.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">📜 History</a>
+                <a href="settings.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">⚙️ Settings</a>
+                <div class="w-px h-6 bg-surface-border mx-2 hidden sm:block"></div>
+                <a href="login.html" class="px-4 py-2 text-slate-400 hover:text-danger hover:bg-red-500/10 rounded-lg text-sm font-medium transition-colors">🔒 Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-4 py-8">
+
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div>
+                <h1 class="text-2xl font-bold">📋 Automation Scripts</h1>
+                <p class="text-slate-400 text-sm mt-1"><span x-text="scripts.length"></span> script tersimpan</p>
+            </div>
+            <a href="script-editor.html"
+               class="inline-flex items-center gap-2 bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 hover:shadow-brand/40">
+                <span>＋</span> New Script
+            </a>
+        </div>
+
+        <!-- Search & Filter -->
+        <div class="bg-surface-card border border-surface-border rounded-xl p-4 mb-6">
+            <div class="flex gap-3">
+                <div class="relative flex-1">
+                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+                    <input
+                        x-model="searchQuery"
+                        type="text"
+                        class="w-full bg-slate-800 border border-surface-border rounded-lg pl-10 pr-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition-all text-sm"
+                        placeholder="Cari script...">
+                </div>
+                <select x-model="sortBy" class="bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-brand">
+                    <option value="newest">Terbaru</option>
+                    <option value="oldest">Terlama</option>
+                    <option value="name">Nama A-Z</option>
+                    <option value="actions">Jumlah Actions</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Script Cards -->
+        <div class="space-y-4">
+            <template x-for="script in filteredScripts" :key="script.id">
+                <div class="bg-surface-card border border-surface-border rounded-xl overflow-hidden hover:border-slate-600 transition-all animate-slide-up shadow-md">
+                    <!-- Card Header (Clickable to expand) -->
+                    <div class="p-5 cursor-pointer" @click="script.expanded = !script.expanded">
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-lg" x-text="script.icon"></span>
+                                    <h3 class="font-semibold text-slate-100 truncate" x-text="script.name"></h3>
+                                    <span class="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full font-mono">#<span x-text="script.id"></span></span>
+                                </div>
+                                <p class="text-sm text-slate-400 truncate" x-text="script.description"></p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span class="text-xs bg-brand/10 text-brand px-2 py-1 rounded-full font-medium whitespace-nowrap">
+                                    ⚡ <span x-text="script.actions"></span> actions
+                                </span>
+                                <svg :class="script.expanded ? 'rotate-180' : ''"
+                                     class="w-4 h-4 text-slate-500 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3 mt-3 text-xs text-slate-500">
+                            <span>🔄 Repeat: <span x-text="script.repeat" class="text-slate-400"></span>x</span>
+                            <span>•</span>
+                            <span>⏱️ <span x-text="script.created" class="text-slate-400"></span></span>
+                        </div>
+                    </div>
+
+                    <!-- Expanded Actions Preview -->
+                    <div x-show="script.expanded" x-transition
+                         class="border-t border-surface-border bg-slate-900/50 px-5 py-4">
+                        <p class="text-xs text-slate-500 uppercase tracking-wider mb-3 font-medium">Action Flow</p>
+                        <div class="space-y-2">
+                            <template x-for="(action, idx) in script.actionList" :key="idx">
+                                <div class="flex items-center gap-3 text-sm bg-slate-800/50 rounded-lg px-3 py-2 border border-slate-700/30">
+                                    <span class="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400 font-mono" x-text="idx + 1"></span>
+                                    <span x-text="action.icon" class="text-base"></span>
+                                    <span x-text="action.label" class="text-slate-300"></span>
+                                    <span x-text="action.detail" class="text-xs text-slate-500 ml-auto"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="border-t border-surface-border px-5 py-3 flex flex-wrap gap-2 bg-slate-900/30">
+                        <a :href="'execution.html?script=' + script.id"
+                           class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-xs font-semibold rounded-lg px-3 py-2 transition-colors shadow-sm shadow-success/20">
+                            ▶️ Run
+                        </a>
+                        <a :href="'script-editor.html?id=' + script.id"
+                           class="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold rounded-lg px-3 py-2 transition-colors">
+                            ✏️ Edit
+                        </a>
+                        <button @click="copyScript(script)"
+                                class="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold rounded-lg px-3 py-2 transition-colors">
+                            📋 Copy
+                        </button>
+                        <button @click="confirmDelete(script)"
+                                class="inline-flex items-center gap-1.5 hover:bg-red-500/10 text-slate-400 hover:text-danger text-xs font-semibold rounded-lg px-3 py-2 transition-colors ml-auto">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Empty State -->
+            <div x-show="filteredScripts.length === 0" class="text-center py-16">
+                <div class="text-6xl mb-4">📭</div>
+                <p class="text-slate-400 text-lg mb-2" x-text="searchQuery ? 'Tidak ada script yang cocok' : 'Belum ada script'"></p>
+                <p class="text-slate-500 text-sm mb-6" x-show="!searchQuery">Buat script automation pertama kamu sekarang!</p>
+                <a href="script-editor.html" x-show="!searchQuery"
+                   class="inline-flex items-center gap-2 bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all text-sm">
+                    ＋ Buat Script Pertama
+                </a>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Delete Confirmation Modal -->
+    <div x-show="deleteTarget" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+         @click.self="deleteTarget = null">
+        <div class="bg-surface-card border border-surface-border rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div class="text-center mb-4">
+                <span class="text-5xl">⚠️</span>
+                <h3 class="text-lg font-semibold mt-3">Hapus Script?</h3>
+                <p class="text-slate-400 text-sm mt-1">Script "<span x-text="deleteTarget?.name" class="text-slate-200 font-medium"></span>" akan dihapus permanen.</p>
+            </div>
+            <div class="flex gap-3">
+                <button @click="deleteTarget = null"
+                        class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium rounded-lg py-2.5 transition-colors text-sm">Batal</button>
+                <button @click="doDelete()"
+                        class="flex-1 bg-danger hover:bg-red-600 text-white font-medium rounded-lg py-2.5 transition-colors text-sm">🗑️ Hapus</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function dashboard() {
+            return {
+                searchQuery: '',
+                sortBy: 'newest',
+                deleteTarget: null,
+                scripts: [
+                    {
+                        id: 1, name: 'Login Instagram', icon: '📱',
+                        description: 'Auto login ke Instagram dengan screenshot matching',
+                        actions: 5, repeat: '1', created: '25 Jun 2026', expanded: false,
+                        actionList: [
+                            { icon: '🖼️', label: 'Screenshot match', detail: '"login_btn.png" th:0.80' },
+                            { icon: '👆', label: 'Tap hasil match', detail: 'center point' },
+                            { icon: '⌨️', label: 'Input text', detail: '"myusername"' },
+                            { icon: '👆', label: 'Tap koordinat', detail: '(540, 960)' },
+                            { icon: '⏳', label: 'Wait', detail: '2000ms' },
+                        ]
+                    },
+                    {
+                        id: 2, name: 'Claim Daily Reward', icon: '🎁',
+                        description: 'Claim hadiah harian di game',
+                        actions: 2, repeat: '1', created: '24 Jun 2026', expanded: false,
+                        actionList: [
+                            { icon: '👆', label: 'Tap', detail: '(100, 500)' },
+                            { icon: '👆', label: 'Tap', detail: '(540, 800)' },
+                        ]
+                    },
+                    {
+                        id: 3, name: 'Scroll TikTok', icon: '🎵',
+                        description: 'Auto scroll FYP TikTok tiap 5 detik',
+                        actions: 3, repeat: '10', created: '23 Jun 2026', expanded: false,
+                        actionList: [
+                            { icon: '👆', label: 'Tap', detail: '(540, 400) — buka app' },
+                            { icon: '↔️', label: 'Swipe up', detail: '(540,1800)→(540,200) 300ms' },
+                            { icon: '⏳', label: 'Wait', detail: '5000ms' },
+                        ]
+                    },
+                    {
+                        id: 4, name: 'Submit Form', icon: '📝',
+                        description: 'Isi & submit form otomatis',
+                        actions: 6, repeat: '1', created: '22 Jun 2026', expanded: false,
+                        actionList: [
+                            { icon: '🖼️', label: 'Match "field1.png"', detail: 'th:0.75' },
+                            { icon: '👆', label: 'Tap match', detail: '' },
+                            { icon: '⌨️', label: 'Input "Data A"', detail: '' },
+                            { icon: '🖼️', label: 'Match "field2.png"', detail: 'th:0.75' },
+                            { icon: '👆', label: 'Tap match', detail: '' },
+                            { icon: '⌨️', label: 'Input "Data B"', detail: '' },
+                        ]
+                    },
+                    {
+                        id: 5, name: 'Screenshot Region Saver', icon: '📸',
+                        description: 'Capture region tertentu tiap menit',
+                        actions: 4, repeat: '60', created: '20 Jun 2026', expanded: false,
+                        actionList: [
+                            { icon: '⏳', label: 'Wait', detail: '60000ms' },
+                            { icon: '👆', label: 'Tap', detail: '(50, 100) — refresh' },
+                            { icon: '⏳', label: 'Wait', detail: '3000ms' },
+                            { icon: '📸', label: 'Screenshot', detail: 'region (0,0,540,960)' },
+                        ]
+                    },
+                ],
+                init() {
+                    if (!localStorage.getItem('ngulo_auth')) {
+                        // auto-redirect would go here in real app
+                    }
+                },
+                get filteredScripts() {
+                    let result = this.scripts;
+                    if (this.searchQuery) {
+                        const q = this.searchQuery.toLowerCase();
+                        result = result.filter(s =>
+                            s.name.toLowerCase().includes(q) ||
+                            s.description.toLowerCase().includes(q)
+                        );
+                    }
+                    if (this.sortBy === 'name') result = [...result].sort((a, b) => a.name.localeCompare(b.name));
+                    if (this.sortBy === 'actions') result = [...result].sort((a, b) => b.actions - a.actions);
+                    if (this.sortBy === 'oldest') result = [...result].reverse();
+                    return result;
+                },
+                copyScript(script) {
+                    const newScript = { ...script, id: Math.max(...this.scripts.map(s => s.id)) + 1, name: script.name + ' (copy)' };
+                    this.scripts.unshift(newScript);
+                },
+                confirmDelete(script) { this.deleteTarget = script; },
+                doDelete() {
+                    this.scripts = this.scripts.filter(s => s.id !== this.deleteTarget.id);
+                    this.deleteTarget = null;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
