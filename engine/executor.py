@@ -519,11 +519,57 @@ class ScriptExecutor:
             self.log_callback(level, message)
 
     def _resolve_value(self, text: str) -> str:
-        """Replace ${var_name} placeholders with variable values."""
-        result = text
-        for name, val in self.variables.items():
-            result = result.replace(f"${{{name}}}", str(val))
-        return result
+        """Replace ${var.path.to.field} placeholders with variable values, supporting nested JSON access."""
+        def _resolve_single(match):
+            full_path = match.group(1)  # e.g. "randomuser.0.gender"
+            parts = full_path.split(".")
+            var_name = parts[0]          # "randomuser"
+            access_path = parts[1:]      # ["0", "gender"]
+
+            value = self.variables.get(var_name)
+            if value is None:
+                return match.group(0)  # keep original if variable not found
+
+            # No sub-path → return raw value
+            if not access_path:
+                return str(value)
+
+            # Try parsing JSON if it looks like JSON
+            if isinstance(value, str) and value.strip().startswith(("{", "[")):
+                try:
+                    value = json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            # Traverse into nested value
+            for key in access_path:
+                # Try numeric index for lists
+                if isinstance(value, list):
+                    try:
+                        idx = int(key)
+                        value = value[idx]
+                        continue
+                    except (ValueError, IndexError):
+                        pass
+                # Try dict key
+                if isinstance(value, dict):
+                    if key in value:
+                        value = value[key]
+                        continue
+                    # also try numeric key (for numeric-like strings stored in dict)
+                    try:
+                        idx = int(key)
+                        if idx in value:
+                            value = value[idx]
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                # Can't traverse further
+                return match.group(0)
+
+            return str(value)
+
+        return re.sub(r"\$\{([a-zA-Z_]\w*(?:\.[^.}]+)*)\}", _resolve_single, text)
 
     # ---- Android input (real via ADB, or mock) ----
 
