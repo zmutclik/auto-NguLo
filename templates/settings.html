@@ -15,16 +15,36 @@
         .then(r=>r.json().then(d=>({ok:r.ok,data:d})))
         .then(({ok:isOk,data})=>{ msg=data.detail||data.message||'Updated!'; ok=isOk; if(isOk){cur='';newPw='';conf='';} });
     ">
-        {% for label, model, show in [('Current Password','cur','showCur'),('New Password','newPw','showNew'),('Confirm New Password','conf','showConf')] %}
-        <div class="mb-4"><label class="block text-xs font-medium text-slate-400 mb-1.5">{{ label }}</label>
+        <!-- Current Password -->
+        <div class="mb-4">
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">Current Password</label>
             <div class="relative">
-                <input :type="showCur ? 'text':'password'" x-model="cur" class="w-full bg-slate-800 border border-surface-border rounded-lg px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand">
+                <input :type="showCur ? 'text':'password'" x-model="cur" class="w-full bg-slate-800 border border-surface-border rounded-lg px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="●●●●●●●●">
                 <button type="button" @click="showCur=!showCur" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                 </button>
             </div>
         </div>
-        {% endfor %}
+        <!-- New Password -->
+        <div class="mb-4">
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">New Password</label>
+            <div class="relative">
+                <input :type="showNew ? 'text':'password'" x-model="newPw" class="w-full bg-slate-800 border border-surface-border rounded-lg px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Minimal 4 karakter...">
+                <button type="button" @click="showNew=!showNew" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                </button>
+            </div>
+        </div>
+        <!-- Confirm New Password -->
+        <div class="mb-6">
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">Confirm New Password</label>
+            <div class="relative">
+                <input :type="showConf ? 'text':'password'" x-model="conf" class="w-full bg-slate-800 border border-surface-border rounded-lg px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Ulangi password baru...">
+                <button type="button" @click="showConf=!showConf" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                </button>
+            </div>
+        </div>
 
         <div x-show="msg" x-transition :class="ok?'bg-success/10 border-success/30 text-success':'bg-red-500/10 border-red-500/30 text-red-400'" class="rounded-lg px-4 py-3 text-sm flex items-center gap-2 mb-4 border"><span x-text="ok?'✅':'⚠️'"></span><span x-text="msg"></span></div>
         <button type="submit" class="bg-warning hover:bg-amber-600 text-slate-900 font-semibold rounded-lg px-5 py-3 transition-all text-sm shadow-sm shadow-warning/20">🔑 Update Password</button>
@@ -34,11 +54,14 @@
 <div class="bg-surface-card border border-surface-border rounded-2xl p-6 mb-6 shadow-md">
     <h2 class="font-semibold flex items-center gap-2 mb-6"><span class="w-8 h-8 rounded-lg bg-brand/10 flex items-center justify-center text-brand">📱</span> Device Info</h2>
     <div class="grid sm:grid-cols-2 gap-4">
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Server</p><p class="font-medium text-slate-200">Termux / FastAPI</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Database</p><p class="font-medium text-slate-200 font-mono text-sm">SQLite</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Mode</p><p class="font-medium text-warning">Mock (dev)</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Version</p><p class="font-medium text-slate-200">v1.0.0</p></div>
+        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Device</p><p class="font-medium text-slate-200">Samsung Galaxy S23</p></div>
+        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Resolution</p><p class="font-medium text-slate-200 font-mono">1080 × 2340</p></div>
+        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">ADB Status</p><p class="font-medium text-success flex items-center gap-1.5"><span class="w-2 h-2 bg-success rounded-full"></span> Connected</p></div>
+        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Server URL</p><p class="font-medium text-slate-200 font-mono text-sm">http://192.168.1.10:8000</p></div>
+        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Android Version</p><p class="font-medium text-slate-200">14 (API 34)</p></div>
+        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">uiautomator2</p><p class="font-medium text-slate-200">v3.2.0</p></div>
     </div>
+    <button class="mt-4 text-sm text-brand hover:underline inline-flex items-center gap-1">🔄 Refresh Info</button>
 </div>
 
 <div class="bg-surface-card border border-red-500/20 rounded-2xl p-6 shadow-md">

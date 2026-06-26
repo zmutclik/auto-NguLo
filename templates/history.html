@@ -91,6 +91,28 @@
             <div class="flex gap-3"><button @click="confirmClearAll = false" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium rounded-lg py-2.5 text-sm">Batal</button><button @click="clearAll()" class="flex-1 bg-danger hover:bg-red-600 text-white font-medium rounded-lg py-2.5 text-sm">🗑️ Clear All</button></div>
         </div>
     </div>
+
+    <!-- Stats Footer -->
+    <div x-show="history.length > 0" class="mt-8 pt-6 border-t border-surface-border">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+            <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                <p class="text-2xl font-bold text-slate-200" x-text="history.length"></p>
+                <p class="text-xs text-slate-500 mt-1">Total Runs</p>
+            </div>
+            <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                <p class="text-2xl font-bold text-success" x-text="history.filter(e=>e.status==='success').length"></p>
+                <p class="text-xs text-slate-500 mt-1">Completed</p>
+            </div>
+            <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                <p class="text-2xl font-bold text-danger" x-text="history.filter(e=>e.status==='failed').length"></p>
+                <p class="text-xs text-slate-500 mt-1">Failed</p>
+            </div>
+            <div class="bg-surface-card rounded-xl p-4 border border-surface-border">
+                <p class="text-2xl font-bold text-warning" x-text="history.filter(e=>e.status==='stopped').length"></p>
+                <p class="text-xs text-slate-500 mt-1">Stopped</p>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
