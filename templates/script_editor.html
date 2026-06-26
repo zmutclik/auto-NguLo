@@ -383,7 +383,18 @@
                         if (!r.ok) throw new Error('Script not found');
                         const s = await r.json();
                         this.script = { name: s.name, description: s.description||'', repeat_count: s.repeat_count, delay_between_ms: s.delay_between_ms };
-                        this.actions = (s.actions||[]).map(a => ({ ...a, _id: ++this._counter, _expanded: false }));
+                        this.actions = (s.actions||[]).map(a => {
+                            // If key_code is a numeric string or unknown, treat as CUSTOM
+                            const KNOWN_KEYS = ['HOME','BACK','RECENTS','MENU','VOLUME_UP','VOLUME_DOWN','VOLUME_MUTE','MEDIA_PLAY','MEDIA_PAUSE','MEDIA_NEXT','MEDIA_PREVIOUS','POWER','CAMERA','SEARCH','ENTER','DEL','TAB','ESCAPE','DPAD_UP','DPAD_DOWN','DPAD_LEFT','DPAD_RIGHT','DPAD_CENTER'];
+                            const isCustomKey = a.action_type === 'push_key' && !KNOWN_KEYS.includes(a.key_code) && a.key_code !== 'CUSTOM';
+                            return {
+                                ...a,
+                                _id: ++this._counter,
+                                _expanded: false,
+                                _custom_key: isCustomKey ? a.key_code : (a._custom_key || ''),
+                                key_code: isCustomKey ? 'CUSTOM' : (a.key_code || 'HOME'),
+                            };
+                        });
                     } catch(e) {
                         alert('⚠️ Gagal memuat script: ' + e.message);
                         window.location.href = '/dashboard';
@@ -424,7 +435,7 @@
                         template_path: a.template_path, match_threshold: a.match_threshold,
                         retry_count: a.retry_count, retry_delay_ms: a.retry_delay_ms,
                         jump_on_success: a.jump_on_success, jump_on_fail: a.jump_on_fail,
-                        key_code: a.key_code, combo_action: a.combo_action,
+                        key_code: a.key_code === 'CUSTOM' ? (a._custom_key != null ? String(a._custom_key) : 'CUSTOM') : a.key_code, combo_action: a.combo_action,
                         api_url: a.api_url, api_method: a.api_method, api_headers: '{}',
                         api_body: '', api_save_to_var: a.api_save_to_var,
                         var_name: a.var_name, var_operation: a.var_operation,

@@ -44,6 +44,7 @@ KEY_NAME_MAP = {
     "SPACE":          "KEYCODE_SPACE",
     "VOLUME_UP":      "KEYCODE_VOLUME_UP",
     "VOLUME_DOWN":    "KEYCODE_VOLUME_DOWN",
+    "VOLUME_MUTE":    "KEYCODE_VOLUME_MUTE",
     "POWER":          "KEYCODE_POWER",
     "MENU":           "KEYCODE_MENU",
     "SEARCH":         "KEYCODE_SEARCH",
@@ -559,6 +560,9 @@ class ScriptExecutor:
     async def _push_key(self, key_code: str):
         # Resolve keycode to canonical form
         if key_code.startswith("KEYCODE_"):
+            resolved = key_code
+        elif key_code.isdigit():
+            # Numeric key code — pass directly to input keyevent (e.g. "66" = ENTER)
             resolved = key_code
         else:
             resolved = KEY_NAME_MAP.get(key_code.upper(), f"KEYCODE_{key_code.upper()}")
