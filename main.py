@@ -4,9 +4,10 @@ Android Automation Manager running on Termux.
 """
 import json
 import os
+import shutil
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -236,6 +237,26 @@ async def import_scripts(request: Request):
     await db.commit()
     return {"message": f"Imported {imported} scripts"}
 
+# ===== FILE UPLOAD =====
+
+@app.post("/api/upload/template")
+async def upload_template(file: UploadFile = File(...)):
+    """Upload a template image for screenshot_match actions."""
+    allowed = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'}
+    ext = os.path.splitext(file.filename or '')[-1].lower()
+    if ext not in allowed:
+        raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed. Use: {', '.join(sorted(allowed))}")
+
+    os.makedirs(TEMPLATE_DIR, exist_ok=True)
+    import time
+    safe_name = f"{int(time.time()*1000)}_{file.filename.replace(' ', '_')}"
+    file_path = os.path.join(TEMPLATE_DIR, safe_name)
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Return path relative to data/ so it can be served as static
+    relative_path = f"templates/{safe_name}"
+    return {"path": relative_path, "filename": safe_name, "url": f"/static/{relative_path}"}
 
 # ---- Run ----
 if __name__ == "__main__":
