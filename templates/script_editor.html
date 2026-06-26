@@ -83,7 +83,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-slate-500 mb-2">Action Type</label>
-                            <div class="grid grid-cols-5 gap-1.5">
+                            <div class="grid grid-cols-4 gap-1.5">
                                 <template x-for="t in actionTypes" :key="t">
                                     <button @click="a.action_type = t" :class="a.action_type === t ? 'bg-brand text-white border-brand' : 'bg-slate-800 border-surface-border text-slate-400 hover:border-brand'" class="border rounded-lg p-1.5 text-xs text-center transition-all leading-tight"><span x-text="typeIcon(t)"></span><br><span x-text="t.replace('screenshot_','').replace('long_','long').replace('type_','type')"></span></button>
                                 </template>
@@ -377,6 +377,113 @@
                             <div><label class="text-xs text-slate-500">Speed (ms/char)</label><input x-model.number="a.text_speed_ms" type="number" min="10" max="1000" step="10" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
                         </div>
 
+                        <!-- Jump -->
+                        <div x-show="a.action_type === 'jump'" class="space-y-2 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">🎯 Jump To (Action Name)</label>
+                                <div class="flex items-center gap-2">
+                                    <input x-model="a.jump_to" type="text" :list="'jump_list_'+a._id" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="target_action_name">
+                                    <datalist :id="'jump_list_'+a._id">
+                                        <template x-for="act in actions.filter(x=>x._id!==a._id)" :key="act._id">
+                                            <option :value="act.name" x-text="act.name + ' — ' + act.action_type"></option>
+                                        </template>
+                                    </datalist>
+                                </div>
+                                <p class="text-xs text-slate-600 mt-1">Lompat ke action lain berdasarkan nama action</p>
+                            </div>
+                        </div>
+
+                        <!-- Stop / Kill -->
+                        <div x-show="a.action_type === 'stop'" class="mb-3">
+                            <div class="bg-danger/10 border border-danger/20 rounded-xl p-4">
+                                <p class="text-sm text-danger font-medium">⏹️ Stop Script</p>
+                                <p class="text-xs text-slate-400 mt-1">Script akan berhenti saat mencapai action ini. Tidak ada parameter tambahan.</p>
+                            </div>
+                        </div>
+
+                        <!-- IF Condition -->
+                        <div x-show="a.action_type === 'if'" class="space-y-3 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Variable Name</label>
+                                <input x-model="a.condition_var" type="text" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="my_var">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Operator</label>
+                                <select x-model="a.condition_op" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    <option value="eq">== equal</option>
+                                    <option value="ne">!= not equal</option>
+                                    <option value="gt">&gt; greater than</option>
+                                    <option value="lt">&lt; less than</option>
+                                    <option value="ge">&gt;= greater or equal</option>
+                                    <option value="le">&lt;= less or equal</option>
+                                    <option value="contains">contains</option>
+                                    <option value="not_contains">not contains</option>
+                                    <option value="empty">is empty</option>
+                                    <option value="not_empty">is not empty</option>
+                                </select>
+                            </div>
+                            <div x-show="a.condition_op !== 'empty' && a.condition_op !== 'not_empty'">
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Compare Value</label>
+                                <input x-model="a.condition_value" type="text" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="value to compare">
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium text-success mb-1">✅ If True → jump to</label>
+                                    <div class="flex items-center gap-2">
+                                        <input x-model="a.jump_on_true" type="text" :list="'if_true_'+a._id" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-success" placeholder="action_name (empty=next)">
+                                        <datalist :id="'if_true_'+a._id">
+                                            <template x-for="act in actions.filter(x=>x._id!==a._id)" :key="act._id">
+                                                <option :value="act.name" x-text="act.name + ' — ' + act.action_type"></option>
+                                            </template>
+                                        </datalist>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-danger mb-1">❌ If False → jump to</label>
+                                    <div class="flex items-center gap-2">
+                                        <input x-model="a.jump_on_false" type="text" :list="'if_false_'+a._id" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-danger" placeholder="action_name (empty=next)">
+                                        <datalist :id="'if_false_'+a._id">
+                                            <template x-for="act in actions.filter(x=>x._id!==a._id)" :key="act._id">
+                                                <option :value="act.name" x-text="act.name + ' — ' + act.action_type"></option>
+                                            </template>
+                                        </datalist>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Orientation -->
+                        <div x-show="a.action_type === 'orientation'" class="space-y-2 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📱 Orientation</label>
+                                <select x-model="a.orientation_value" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    <option value="auto">Auto (Sensor)</option>
+                                    <option value="portrait">Portrait</option>
+                                    <option value="landscape">Landscape</option>
+                                    <option value="reverse_portrait">Reverse Portrait</option>
+                                    <option value="reverse_landscape">Reverse Landscape</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Launch App -->
+                        <div x-show="a.action_type === 'launch_app'" class="space-y-2 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">🚀 Package Name</label>
+                                <input x-model="a.app_package" type="text" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="com.example.app">
+                                <p class="text-xs text-slate-600 mt-1">Contoh: com.android.chrome, com.whatsapp</p>
+                            </div>
+                        </div>
+
+                        <!-- Kill App -->
+                        <div x-show="a.action_type === 'kill_app'" class="space-y-2 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">🔪 Package Name</label>
+                                <input x-model="a.app_package" type="text" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="com.example.app">
+                                <p class="text-xs text-slate-600 mt-1">Force-stop aplikasi berdasarkan package name</p>
+                            </div>
+                        </div>
+
                         <!-- Common -->
                         <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-700/50">
                             <div><label class="text-xs text-slate-500">Wait Before (ms)</label><input x-model.number="a.wait_before_ms" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
@@ -445,8 +552,8 @@
             _counter: 100,
             // Device resolution (fetched from /api/device/info); defaults to 1080x1920
             deviceResolution: { w: 1080, h: 1920 },
-            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text'],
-            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝'}[t]||'❓'; },
+            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app'],
+            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝','jump':'🔀','stop':'⏹️','if':'🔀','orientation':'📱','launch_app':'🚀','kill_app':'🔪'}[t]||'❓'; },
 
             // ---- Match region drag on template image ----
             matchRegionRectStyle(a) {
@@ -656,6 +763,11 @@
             },
             addAction() {
                 this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',template_path2:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',match_region_x:null,match_region_y:null,match_region_w:null,match_region_h:null,key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false,
+                    // new action type defaults
+                    jump_to:'',
+                    condition_var:'', condition_op:'eq', condition_value:'', jump_on_true:'', jump_on_false:'',
+                    orientation_value:'auto',
+                    app_package:'',
                     // coordinate picker state
                     _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
                     _pickPctX: null, _pickPctY: null, _swiping: false,
@@ -700,6 +812,12 @@
                         var_name: a.var_name, var_operation: a.var_operation,
                         var_value: a.var_value, text_content: a.text_content,
                         text_speed_ms: a.text_speed_ms,
+                        jump_to: a.jump_to || '',
+                        condition_var: a.condition_var || '', condition_op: a.condition_op || 'eq',
+                        condition_value: a.condition_value || '',
+                        jump_on_true: a.jump_on_true || '', jump_on_false: a.jump_on_false || '',
+                        orientation_value: a.orientation_value || 'auto',
+                        app_package: a.app_package || '',
                         use_match_result: !!a.use_match_result,
                         wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,
                         wait_after_ms: a.wait_after_ms,

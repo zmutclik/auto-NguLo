@@ -55,8 +55,12 @@ async def create_action(script_id: int, data: ActionCreate):
             api_url, api_method, api_headers, api_body, api_save_to_var,
             var_name, var_operation, var_value,
             text_content, text_speed_ms,
+            jump_to,
+            condition_var, condition_op, condition_value, jump_on_true, jump_on_false,
+            orientation_value,
+            app_package,
             use_match_result, wait_ms, wait_before_ms, wait_after_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             script_id, order, data.name, data.action_type,
             data.x, data.y, data.x2, data.y2, data.duration_ms,
@@ -67,6 +71,10 @@ async def create_action(script_id: int, data: ActionCreate):
             data.api_url, data.api_method, data.api_headers, data.api_body, data.api_save_to_var,
             data.var_name, data.var_operation, data.var_value,
             data.text_content, data.text_speed_ms,
+            data.jump_to,
+            data.condition_var, data.condition_op, data.condition_value, data.jump_on_true, data.jump_on_false,
+            data.orientation_value,
+            data.app_package,
             int(data.use_match_result), data.wait_ms, data.wait_before_ms, data.wait_after_ms,
         )
     )
@@ -111,6 +119,12 @@ async def update_action(script_id: int, action_id: int, data: ActionUpdate):
         "var_name": data.var_name, "var_operation": data.var_operation,
         "var_value": data.var_value,
         "text_content": data.text_content, "text_speed_ms": data.text_speed_ms,
+        "jump_to": data.jump_to,
+        "condition_var": data.condition_var, "condition_op": data.condition_op,
+        "condition_value": data.condition_value,
+        "jump_on_true": data.jump_on_true, "jump_on_false": data.jump_on_false,
+        "orientation_value": data.orientation_value,
+        "app_package": data.app_package,
         "use_match_result": int(data.use_match_result) if data.use_match_result is not None else None,
         "wait_ms": data.wait_ms, "wait_before_ms": data.wait_before_ms,
         "wait_after_ms": data.wait_after_ms,

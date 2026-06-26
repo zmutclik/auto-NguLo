@@ -566,6 +566,12 @@ class ScriptExecutor:
     - fetch_api: HTTP call + save response to variable
     - variable: set/update/get variable
     - type_text: simulate keyboard typing character by character
+    - jump: jump to another action by name
+    - stop: stop script execution immediately
+    - if: conditional branching (eq, ne, gt, lt, contains, etc.)
+    - orientation: change device orientation (portrait/landscape/auto)
+    - launch_app: launch an Android app by package name
+    - kill_app: force-stop an Android app by package name
     """
 
     def __init__(self, mock_mode: bool = True):
@@ -991,6 +997,142 @@ class ScriptExecutor:
                         self._log("warn", f"  skipping non-ASCII char: {ch}")
                     await asyncio.sleep(speed_ms / 1000)
 
+    # ---- New action types: jump, stop/kill, if, orientation, launch_app, kill_app ----
+
+    async def _jump_to_action(self, jump_to: str, actions: list) -> int | None:
+        """Resolve jump_to (action name) to its index in actions list. Returns None if not found."""
+        if not jump_to:
+            return None
+        for i, a in enumerate(actions):
+            if a.get("name") == jump_to:
+                self._log("info", f"  🔀 Jumping to [{jump_to}] (action #{i + 1})")
+                return i
+        self._log("error", f"  Jump target [{jump_to}] not found")
+        return None
+
+    async def _if_condition(self, action: dict) -> tuple:
+        """
+        Evaluate an IF condition.
+        Returns (jump_to: str or None,  whether the condition was true or false)
+        Jump target is resolved outside.
+        """
+        var_name = action.get("condition_var", "")
+        op = action.get("condition_op", "eq")
+        compare_val = self._resolve_value(action.get("condition_value", ""))
+
+        actual_val = self.variables.get(var_name, "")
+        actual_val = self._resolve_value(actual_val)
+
+        self._log("info", f"  IF condition: ${var_name} ({actual_val}) {op} {compare_val}")
+
+        result = False
+        if op == "eq":
+            result = str(actual_val) == str(compare_val)
+        elif op == "ne":
+            result = str(actual_val) != str(compare_val)
+        elif op == "gt":
+            try:
+                result = float(actual_val) > float(compare_val)
+            except (ValueError, TypeError):
+                result = False
+        elif op == "lt":
+            try:
+                result = float(actual_val) < float(compare_val)
+            except (ValueError, TypeError):
+                result = False
+        elif op == "ge":
+            try:
+                result = float(actual_val) >= float(compare_val)
+            except (ValueError, TypeError):
+                result = False
+        elif op == "le":
+            try:
+                result = float(actual_val) <= float(compare_val)
+            except (ValueError, TypeError):
+                result = False
+        elif op == "contains":
+            result = compare_val in str(actual_val)
+        elif op == "not_contains":
+            result = compare_val not in str(actual_val)
+        elif op == "empty":
+            result = actual_val == "" or actual_val is None
+        elif op == "not_empty":
+            result = actual_val != "" and actual_val is not None
+        else:
+            self._log("warn", f"  unknown condition operator: {op}, treating as false")
+
+        self._log("info", f"  IF result: {result}")
+        return (action.get("jump_on_true", "") if result else action.get("jump_on_false", ""), result)
+
+    async def _orientation(self, orientation: str):
+        """Set device orientation via ADB."""
+        # Map orientation values to Android settings
+        orient_map = {
+            "auto": "0",      # auto-rotate on
+            "portrait": "0",  # settings put system user_rotation 0
+            "landscape": "1",
+            "reverse_portrait": "2",
+            "reverse_landscape": "3",
+        }
+        # For "auto" we enable accelerometer rotation
+        if orientation == "auto":
+            if self.mock_mode:
+                self._log("info", f"  [mock] orientation → auto (accelerometer)")
+            else:
+                self._log("info", f"  📱 orientation → auto")
+                adb_prefix = ("-s", self._serial) if self._serial else ()
+                await _run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "accelerometer_rotation", "1")),
+                              timeout=5.0)
+                return
+
+        rot_val = orient_map.get(orientation, "0")
+        if self.mock_mode:
+            self._log("info", f"  [mock] orientation → {orientation} (rotation {rot_val})")
+        else:
+            self._log("info", f"  📱 orientation → {orientation}")
+            adb_prefix = ("-s", self._serial) if self._serial else ()
+            # First disable accelerometer rotation, then set user rotation
+            await _run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "accelerometer_rotation", "0")),
+                          timeout=5.0)
+            await _run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "user_rotation", rot_val)),
+                          timeout=5.0)
+
+    async def _launch_app(self, package: str):
+        """Launch an Android app by package name via ADB."""
+        resolved = self._resolve_value(package)
+        if self.mock_mode:
+            self._log("info", f"  [mock] launch_app: {resolved}")
+            await asyncio.sleep(0.3)
+        else:
+            self._log("info", f"  🚀 launch_app: {resolved}")
+            adb_prefix = ("-s", self._serial) if self._serial else ()
+            # Use monkey to launch the app
+            await _run_adb(*(adb_prefix + ("shell", "monkey", "-p", resolved, "-c", "android.intent.category.LAUNCHER", "1")),
+                          timeout=10.0)
+            await asyncio.sleep(1.0)  # wait for app to start
+
+    async def _kill_app(self, package: str):
+        """Kill/force-stop an Android app by package name via ADB."""
+        resolved = self._resolve_value(package)
+        if self.mock_mode:
+            self._log("info", f"  [mock] kill_app: {resolved}")
+            await asyncio.sleep(0.2)
+        else:
+            self._log("info", f"  🔪 kill_app: {resolved}")
+            adb_prefix = ("-s", self._serial) if self._serial else ()
+            await _run_adb(*(adb_prefix + ("shell", "am", "force-stop", resolved)),
+                          timeout=10.0)
+            await asyncio.sleep(0.3)
+
+    async def _resolve_jump(self, jump_to: str, actions: list) -> int | None:
+        """Resolve a jump target name to action index. Shared helper for all action types."""
+        if not jump_to:
+            return None
+        for i, a in enumerate(actions):
+            if a.get("name") == jump_to:
+                return i
+        return None
+
     # ---- Main executor ----
 
     async def execute(self, script: dict, log_cb: Callable | None = None) -> dict:
@@ -1152,6 +1294,48 @@ class ScriptExecutor:
                             action.get("text_content", ""),
                             action.get("text_speed_ms", 50),
                         )
+
+                    # ---- New action types ----
+                    elif action_type == "jump":
+                        jump_to = action.get("jump_to", "")
+                        if jump_to:
+                            target_idx = await self._resolve_jump(jump_to, actions)
+                            if target_idx is not None:
+                                idx = target_idx
+                                self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: jumped to [{jump_to}]")
+                                continue
+                            else:
+                                ok = False
+                                err_msg = f"Jump target [{jump_to}] not found"
+                        else:
+                            self._log("warn", f"  jump action without target, skipping")
+
+                    elif action_type == "stop":
+                        self._log("info", f"  ⏹️ stop action: stopping execution")
+                        self._stop_requested = True
+                        ok = True  # stop is intentional, not a failure
+
+                    elif action_type == "if":
+                        jump_target, result = await self._if_condition(action)
+                        self._log("info", f"  IF result: {result}, jump_to: {jump_target or '(none)'}")
+                        if jump_target:
+                            target_idx = await self._resolve_jump(jump_target, actions)
+                            if target_idx is not None:
+                                idx = target_idx
+                                self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: jumped to [{jump_target}]")
+                                continue
+                            else:
+                                ok = False
+                                err_msg = f"IF jump target [{jump_target}] not found"
+
+                    elif action_type == "orientation":
+                        await self._orientation(action.get("orientation_value", "auto"))
+
+                    elif action_type == "launch_app":
+                        await self._launch_app(action.get("app_package", ""))
+
+                    elif action_type == "kill_app":
+                        await self._kill_app(action.get("app_package", ""))
 
                     else:
                         self._log("warn", f"  unknown action type: {action_type}")

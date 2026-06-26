@@ -82,6 +82,19 @@ async def init_db():
             -- type text
             text_content    TEXT DEFAULT '',
             text_speed_ms   INTEGER DEFAULT 50,
+            -- jump
+            jump_to         TEXT DEFAULT '',
+            -- stop / kill — no extra fields needed
+            -- if / condition
+            condition_var   TEXT DEFAULT '',
+            condition_op    TEXT DEFAULT 'eq',
+            condition_value TEXT DEFAULT '',
+            jump_on_true    TEXT DEFAULT '',
+            jump_on_false   TEXT DEFAULT '',
+            -- orientation
+            orientation_value TEXT DEFAULT 'auto',
+            -- launch_app / kill_app
+            app_package     TEXT DEFAULT '',
             -- common
             use_match_result INTEGER DEFAULT 0,
             wait_ms         INTEGER DEFAULT 1000,
@@ -126,6 +139,23 @@ async def init_db():
         ('match_region_w', 'REAL DEFAULT NULL'),
         ('match_region_h', 'REAL DEFAULT NULL'),
         ('match_region_screen', "TEXT DEFAULT ''"),
+    ]:
+        try:
+            await db.execute(f"ALTER TABLE actions ADD COLUMN {col} {col_type}")
+            await db.commit()
+        except Exception:
+            pass  # column already exists
+
+    # Migration: add new action type columns (v1.3+)
+    for col, col_type in [
+        ('jump_to', "TEXT DEFAULT ''"),
+        ('condition_var', "TEXT DEFAULT ''"),
+        ('condition_op', "TEXT DEFAULT 'eq'"),
+        ('condition_value', "TEXT DEFAULT ''"),
+        ('jump_on_true', "TEXT DEFAULT ''"),
+        ('jump_on_false', "TEXT DEFAULT ''"),
+        ('orientation_value', "TEXT DEFAULT 'auto'"),
+        ('app_package', "TEXT DEFAULT ''"),
     ]:
         try:
             await db.execute(f"ALTER TABLE actions ADD COLUMN {col} {col_type}")

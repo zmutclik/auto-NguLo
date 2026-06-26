@@ -33,7 +33,7 @@ class ScriptUpdate(BaseModel):
 # ---- Actions ----
 class ActionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
-    action_type: str = Field(..., pattern=r"^(tap|swipe|long_press|screenshot_match|wait|push_key|combo|fetch_api|variable|type_text)$")
+    action_type: str = Field(..., pattern=r"^(tap|swipe|long_press|screenshot_match|wait|push_key|combo|fetch_api|variable|type_text|jump|stop|if|orientation|launch_app|kill_app)$")
     # coords
     x: Optional[float] = None
     y: Optional[float] = None
@@ -71,6 +71,19 @@ class ActionCreate(BaseModel):
     # type text
     text_content: str = ""
     text_speed_ms: int = 50
+    # jump
+    jump_to: str = ""
+    # stop/kill — no extra fields needed
+    # if / condition
+    condition_var: str = ""
+    condition_op: str = "eq"
+    condition_value: str = ""
+    jump_on_true: str = ""
+    jump_on_false: str = ""
+    # orientation
+    orientation_value: str = "auto"
+    # launch_app / kill_app
+    app_package: str = ""
     # common
     use_match_result: bool = False
     wait_ms: int = 1000
@@ -110,6 +123,20 @@ class ActionUpdate(BaseModel):
     var_value: Optional[str] = None
     text_content: Optional[str] = None
     text_speed_ms: Optional[int] = None
+    # jump
+    jump_to: Optional[str] = None
+    # stop/kill — no extra fields
+    # if / condition
+    condition_var: Optional[str] = None
+    condition_op: Optional[str] = None
+    condition_value: Optional[str] = None
+    jump_on_true: Optional[str] = None
+    jump_on_false: Optional[str] = None
+    # orientation
+    orientation_value: Optional[str] = None
+    # launch_app / kill_app
+    app_package: Optional[str] = None
+    # common
     use_match_result: Optional[bool] = None
     wait_ms: Optional[int] = None
     wait_before_ms: Optional[int] = None
