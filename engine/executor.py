@@ -167,7 +167,11 @@ async def _detect_sendevent(serial: str | None = None) -> bool:
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=4.0)
         out = stdout.decode("utf-8", errors="replace")
-    except Exception:
+        print(f"[_detect_sendevent] getevent -p raw output ({len(out)} bytes):")
+        # Print first 2000 chars for debugging
+        print(out[:2000])
+    except Exception as e:
+        print(f"[_detect_sendevent] getevent -p failed: {e}")
         _sendevent_available = False
         return False
 
@@ -240,9 +244,11 @@ async def _detect_sendevent(serial: str | None = None) -> bool:
     # sendevent is available if we found at least a touch device
     if _device_touch_event:
         _sendevent_available = True
+        print(f"[_detect_sendevent] OK — touch={_device_touch_event}, key={_device_key_event}, max={_device_max_x}x{_device_max_y}")
         return True
 
     _sendevent_available = False
+    print(f"[_detect_sendevent] FAILED — no touch device found. touch={_device_touch_event}, key={_device_key_event}")
     return False
 
 async def _run_adb(*args, timeout: float = 5.0) -> str:
@@ -276,6 +282,7 @@ async def _send_event_cmd(serial: str | None, dev: str, ev_type: int, ev_code: i
     """Inject a single input event via /dev/input/eventN — no root needed if in input group."""
     adb_prefix = ("-s", serial) if serial else ()
     cmd = f"sendevent {dev} {ev_type} {ev_code} {ev_value}"
+    print(f"[sendevent] adb shell {cmd}")
     await _run_adb(*(adb_prefix + ("shell", cmd)), timeout=3.0)
 
 async def _sendevent_key(serial: str | None, android_keycode: str):
@@ -288,6 +295,7 @@ async def _sendevent_key(serial: str | None, android_keycode: str):
         raise RuntimeError("No input device found for sendevent")
 
     linux_code = _KEYCODE_TO_LINUX.get(android_keycode, 102)  # default HOME
+    print(f"[sendevent_key] android_keycode={android_keycode} → linux_code={linux_code}, dev={dev}")
 
     # Key down
     await _send_event_cmd(serial, dev, 1, linux_code, 1)   # EV_KEY = 1, value=1 (down)
