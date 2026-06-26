@@ -181,7 +181,7 @@ async def _detect_sendevent(serial: str | None = None) -> bool:
     for i, line in enumerate(lines):
         line = line.strip()
         if line.startswith("add device"):
-            current_dev = line.split(":", 1)[0].split()[-1]
+            current_dev = line.split(":", 1)[1].strip()
         elif line.startswith("name:"):
             current_name = line.split(":", 1)[1].strip().strip('"')
             if "touch" in current_name.lower() or "fts" in current_name.lower():
