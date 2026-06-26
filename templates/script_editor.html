@@ -106,8 +106,8 @@
                                 <label class="block text-xs font-medium text-slate-500 mb-1">Template Image</label>
                                 <div class="flex items-center gap-2">
                                     <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Pilih gambar template...">
-                                    <button type="button" @click="$refs['tplInput_'+a._id].click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0">📁 Browse</button>
-                                    <input type="file" :x-ref="'tplInput_'+a._id" accept="image/*" class="hidden" @change="handleTemplateUpload($event, a)">
+                                    <button type="button" @click="$el.nextElementSibling.click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
+                                    <input type="file" accept="image/*" class="hidden" @change="handleTemplateUpload($event, a)">
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-3">
