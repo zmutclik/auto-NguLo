@@ -712,19 +712,35 @@ class ScriptExecutor:
                 await asyncio.sleep(0.05)
                 return
 
-            # Multi-key combo (e.g. screenshot = VOLUME_DOWN + POWER)
-            # Use sendevent to press all keys simultaneously, then release
+            # --- Multi-key combo ---
+            # Strategy 1: `input keycombination` (native Android 7.0+, handles Ctrl+A etc.)
             try:
-                await _sendevent_combo(self._serial, keys, hold_ms=500)
+                adb_prefix = ("-s", self._serial) if self._serial else ()
+                await _run_adb(*(adb_prefix + ("shell", "input", "keycombination") + tuple(keys)),
+                              timeout=5.0)
                 await asyncio.sleep(0.05)
-            except RuntimeError:
-                # Fallback: send keys sequentially (imperfect but better than nothing)
-                self._log("warn", f"  ⚠️  sendevent unavailable, falling back to sequential keyevents")
-                for i, key in enumerate(keys):
-                    await _run_adb_input(self._serial, "keyevent", key)
-                    if i < len(keys) - 1:
-                        await asyncio.sleep(0.03)
-                await asyncio.sleep(0.05)
+                return
+            except RuntimeError as e:
+                self._log("warn", f"  keycombination failed: {e}")
+
+            # Strategy 2: sendevent for hardware combos (volume+power etc.)
+            #             Filters to keys that have a linux code mapping
+            hw_keys = [k for k in keys if k in _KEYCODE_TO_LINUX]
+            if hw_keys and len(hw_keys) == len(keys):
+                try:
+                    await _sendevent_combo(self._serial, hw_keys, hold_ms=500)
+                    await asyncio.sleep(0.05)
+                    return
+                except RuntimeError as e:
+                    self._log("warn", f"  sendevent failed: {e}")
+
+            # Strategy 3: Last resort — sequential keyevents (won't hold keys but won't crash)
+            self._log("warn", f"  ⚠️  falling back to sequential keyevents (combo may not work)")
+            for i, key in enumerate(keys):
+                await _run_adb_input(self._serial, "keyevent", key)
+                if i < len(keys) - 1:
+                    await asyncio.sleep(0.03)
+            await asyncio.sleep(0.05)
 
     async def _screenshot_match(self, template_path: str, threshold: float,
                                   retry_count: int, retry_delay_ms: int) -> tuple:
