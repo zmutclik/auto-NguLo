@@ -62,6 +62,60 @@ KEY_NAME_MAP = {
 }
 
 
+# Cached device capabilities
+_device_rooted: bool | None = None
+_device_su_path: str | None = None
+_inject_perms_granted: bool = False
+
+async def _detect_root() -> bool:
+    """Detect if the connected Android device has root (su binary)."""
+    global _device_rooted, _device_su_path
+    if _device_rooted is not None:
+        return _device_rooted
+    # Try common su paths on Android
+    for su_path in ("su", "/system/bin/su", "/system/xbin/su", "/sbin/su", "/su/bin/su"):
+        try:
+            proc = await asyncio.wait_for(
+                asyncio.create_subprocess_exec(
+                    "adb", "shell", f"{su_path} -c 'id -u'",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                ),
+                timeout=3.0,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+            uid = stdout.decode("utf-8", errors="replace").strip()
+            if uid == "0":
+                _device_rooted = True
+                _device_su_path = su_path
+                return True
+        except Exception:
+            continue
+    _device_rooted = False
+    return False
+
+async def _try_grant_inject_permission() -> bool:
+    """Try to grant INJECT_EVENTS permission to the shell process via appops."""
+    global _inject_perms_granted
+    if _inject_perms_granted:
+        return True
+    try:
+        proc = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                "adb", "shell", "appops", "set", "com.android.shell", "INJECT_EVENTS", "allow",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            ),
+            timeout=3.0,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=3.0)
+        if proc.returncode == 0:
+            _inject_perms_granted = True
+            return True
+    except Exception:
+        pass
+    return False
+
 async def _run_adb(*args, timeout: float = 5.0) -> str:
     """Run ADB command asynchronously, return stdout. Raises RuntimeError on failure."""
     try:
@@ -88,6 +142,51 @@ async def _run_adb(*args, timeout: float = 5.0) -> str:
         raise
     except Exception as e:
         raise RuntimeError(f"ADB unexpected error: {e}")
+
+async def _run_adb_input(serial: str | None, *input_args, timeout: float = 5.0) -> str:
+    """
+    Run an 'adb shell input <args>' command, automatically using su for root,
+    and retrying with permission grant on SecurityException.
+    
+    Args:
+        serial: ADB device serial (or None for default device)
+        *input_args: Arguments to the `input` subcommand (e.g. "tap", "100", "200")
+    """
+    cmd_str = "input " + " ".join(str(a) for a in input_args)
+
+    # Build ADB prefix args
+    adb_prefix = ("-s", serial) if serial else ()
+
+    # Strategy 1: Direct call (works on rooted Magisk devices, or devices with permissive SELinux)
+    try:
+        return await _run_adb(*(adb_prefix + ("shell", "input") + input_args), timeout=timeout)
+    except RuntimeError as e:
+        err_str = str(e)
+        if "INJECT_EVENTS" not in err_str and "SecurityException" not in err_str:
+            raise
+
+    # Strategy 2: Try granting INJECT_EVENTS permission, then retry direct call
+    if not _inject_perms_granted:
+        granted = await _try_grant_inject_permission()
+        if granted:
+            try:
+                return await _run_adb(*(adb_prefix + ("shell", "input") + input_args), timeout=timeout)
+            except RuntimeError as e:
+                err_str = str(e)
+                if "INJECT_EVENTS" not in err_str and "SecurityException" not in err_str:
+                    raise
+
+    # Strategy 3: Use su (root) if available
+    rooted = await _detect_root()
+    if rooted and _device_su_path:
+        su_cmd = f"{_device_su_path} -c '{cmd_str}'"
+        return await _run_adb(*(adb_prefix + ("shell", su_cmd)), timeout=timeout)
+
+    # Strategy 4: Give up with helpful error
+    raise RuntimeError(
+        f"INJECT_EVENTS permission denied. This device does not allow ADB input injection.\n"
+        f"Try: 1) Root the device  2) Enable 'USB debugging (Security Settings)' in Developer Options  3) Use a device with Android < 10"
+    )
 
 
 async def adb_available() -> bool:
@@ -172,7 +271,7 @@ class ScriptExecutor:
             await asyncio.sleep(0.1)
         else:
             self._log("info", f"  👆 tap({x:.0f}, {y:.0f})")
-            await _run_adb(*self._adb_args("shell", "input", "tap", str(int(x)), str(int(y))))
+            await _run_adb_input(self._serial, "tap", str(int(x)), str(int(y)))
             await asyncio.sleep(0.05)
 
     async def _swipe(self, x1, y1, x2, y2, duration_ms):
@@ -181,8 +280,8 @@ class ScriptExecutor:
             await asyncio.sleep(duration_ms / 1000 * 0.1)
         else:
             self._log("info", f"  👆 swipe({x1:.0f},{y1:.0f} → {x2:.0f},{y2:.0f}) {duration_ms}ms")
-            await _run_adb(*self._adb_args("shell", "input", "swipe",
-                str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(int(duration_ms))))
+            await _run_adb_input(self._serial, "swipe",
+                str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(int(duration_ms)))
             await asyncio.sleep(duration_ms / 1000)
 
     async def _long_press(self, x, y, duration_ms):
@@ -192,8 +291,8 @@ class ScriptExecutor:
         else:
             self._log("info", f"  👆 long_press({x:.0f}, {y:.0f}) {duration_ms}ms")
             # Swipe from point to same point = long press
-            await _run_adb(*self._adb_args("shell", "input", "swipe",
-                str(int(x)), str(int(y)), str(int(x)), str(int(y)), str(int(duration_ms))))
+            await _run_adb_input(self._serial, "swipe",
+                str(int(x)), str(int(y)), str(int(x)), str(int(y)), str(int(duration_ms)))
             await asyncio.sleep(duration_ms / 1000)
 
     async def _push_key(self, key_code: str):
@@ -207,7 +306,7 @@ class ScriptExecutor:
             await asyncio.sleep(0.05)
         else:
             self._log("info", f"  ⌨️  keyevent {resolved}")
-            await _run_adb(*self._adb_args("shell", "input", "keyevent", resolved))
+            await _run_adb_input(self._serial, "keyevent", resolved)
             await asyncio.sleep(0.05)
 
     async def _combo_action(self, action: str):
@@ -219,7 +318,7 @@ class ScriptExecutor:
         else:
             self._log("info", f"  ⌨️  combo: {action} → {keys}")
             for i, key in enumerate(keys):
-                await _run_adb(*self._adb_args("shell", "input", "keyevent", key))
+                await _run_adb_input(self._serial, "keyevent", key)
                 if i < len(keys) - 1:
                     await asyncio.sleep(0.03)
             await asyncio.sleep(0.05)
@@ -276,16 +375,16 @@ class ScriptExecutor:
             safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?@#$%&*()-_=+[]{}|;:'\"/<>`~")
             if all(ch in safe_chars for ch in resolved):
                 # Fast path: send whole text
-                await _run_adb(*self._adb_args("shell", "input", "text", resolved))
+                await _run_adb_input(self._serial, "text", resolved)
                 await asyncio.sleep(speed_ms / 1000 * len(resolved))
             else:
                 for ch in resolved:
                     if ch == " ":
-                        await _run_adb(*self._adb_args("shell", "input", "keyevent", "KEYCODE_SPACE"))
+                        await _run_adb_input(self._serial, "keyevent", "KEYCODE_SPACE")
                     elif ch == "\n":
-                        await _run_adb(*self._adb_args("shell", "input", "keyevent", "KEYCODE_ENTER"))
+                        await _run_adb_input(self._serial, "keyevent", "KEYCODE_ENTER")
                     elif ch.isascii() and ch.isprintable():
-                        await _run_adb(*self._adb_args("shell", "input", "text", ch))
+                        await _run_adb_input(self._serial, "text", ch)
                     else:
                         # Unicode: broadcast via am broadcast
                         self._log("warn", f"  skipping non-ASCII char: {ch}")
