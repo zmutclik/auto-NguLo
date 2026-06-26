@@ -42,6 +42,7 @@ class ActionCreate(BaseModel):
     duration_ms: int = 300
     # screenshot match
     template_path: str = ""
+    template_path2: str = ""
     match_threshold: float = 0.80
     retry_count: int = 1
     retry_delay_ms: int = 1000
@@ -80,6 +81,7 @@ class ActionUpdate(BaseModel):
     y2: Optional[float] = None
     duration_ms: Optional[int] = None
     template_path: Optional[str] = None
+    template_path2: Optional[str] = None
     match_threshold: Optional[float] = None
     retry_count: Optional[int] = None
     retry_delay_ms: Optional[int] = None

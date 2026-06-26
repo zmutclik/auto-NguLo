@@ -7,7 +7,16 @@ import json
 import os
 import time
 import re
+import tempfile
 from typing import Callable, Optional
+
+# OpenCV — optional, used for template matching on screenshots
+try:
+    import cv2
+    import numpy as np
+    _OPENCV_AVAILABLE = True
+except ImportError:
+    _OPENCV_AVAILABLE = False
 
 # ---- ADB Helper utilities ----
 
@@ -742,6 +751,106 @@ class ScriptExecutor:
                     await asyncio.sleep(0.03)
             await asyncio.sleep(0.05)
 
+    async def _capture_screenshot(self, save_path: str | None = None) -> str:
+        """Capture a screenshot via ADB and return the local file path."""
+        tmp_path = save_path or os.path.join(tempfile.gettempdir(), f"angulo_screen_{time.time():.0f}.png")
+        if self.mock_mode:
+            # In mock mode, create a dummy black image
+            if _OPENCV_AVAILABLE:
+                img = np.zeros((1920, 1080, 3), dtype=np.uint8)
+                cv2.imwrite(tmp_path, img)
+            else:
+                # Create a minimal valid PNG
+                import struct, zlib
+                def _make_minimal_png(path):
+                    sig = b'\x89PNG\r\n\x1a\n'
+                    ihdr_data = struct.pack('>IIBBBBB', 1080, 1920, 8, 2, 0, 0, 0)
+                    ihdr_crc = zlib.crc32(b'IHDR' + ihdr_data)
+                    ihdr_chunk = struct.pack('>I', 13) + b'IHDR' + ihdr_data + struct.pack('>I', ihdr_crc)
+                    # black IDAT
+                    raw = b'\x00' * (1080 * 3)
+                    compressed = zlib.compress(b''.join([raw] * 1920))
+                    idat_crc = zlib.crc32(b'IDAT' + compressed)
+                    idat_chunk = struct.pack('>I', len(compressed)) + b'IDAT' + compressed + struct.pack('>I', idat_crc)
+                    iend_crc = zlib.crc32(b'IEND')
+                    iend_chunk = struct.pack('>I', 0) + b'IEND' + struct.pack('>I', iend_crc)
+                    with open(path, 'wb') as f:
+                        f.write(sig + ihdr_chunk + idat_chunk + iend_chunk)
+                _make_minimal_png(tmp_path)
+            return tmp_path
+        # Real mode: adb shell screencap
+        adb_prefix = ("-s", self._serial) if self._serial else ()
+        try:
+            await _run_adb(*(adb_prefix + ("shell", "screencap", "-p", "/sdcard/angulo_tmp.png")), timeout=10.0)
+            await _run_adb(*(adb_prefix + ("pull", "/sdcard/angulo_tmp.png", tmp_path)), timeout=10.0)
+            # Cleanup remote temp
+            try:
+                await _run_adb(*(adb_prefix + ("shell", "rm", "/sdcard/angulo_tmp.png")), timeout=3.0)
+            except Exception:
+                pass
+        except RuntimeError as e:
+            raise RuntimeError(f"Failed to capture screenshot: {e}")
+        return tmp_path
+
+    async def _match_template_on_screen(self, template_path: str, threshold: float) -> tuple:
+        """
+        Match a template image against current screen.
+        Returns (found: bool, x: float, y: float).
+        x, y are the center coordinates of the match.
+        """
+        if not _OPENCV_AVAILABLE:
+            self._log("warn", "  ⚠️ OpenCV not installed, cannot do real template matching. Install: pip install opencv-python numpy")
+            if self.mock_mode:
+                return (True, 540.0, 1200.0)
+            return (False, 0, 0)
+
+        # Resolve template file path
+        template_full_path = template_path
+        if not os.path.isabs(template_path):
+            # template_path is like "templates/filename.png" — resolve from data/
+            template_full_path = os.path.join("data", template_path)
+        if not os.path.isfile(template_full_path):
+            raise RuntimeError(f"Template file not found: {template_full_path}")
+
+        # Capture screenshot
+        screen_path = await self._capture_screenshot()
+
+        try:
+            # Read images
+            screen = cv2.imread(screen_path)
+            template = cv2.imread(template_full_path)
+
+            if screen is None:
+                raise RuntimeError(f"Failed to read screenshot from {screen_path}")
+            if template is None:
+                raise RuntimeError(f"Failed to read template from {template_full_path}")
+
+            th, tw = template.shape[:2]
+            sh, sw = screen.shape[:2]
+
+            if tw > sw or th > sh:
+                raise RuntimeError(f"Template ({tw}x{th}) is larger than screen ({sw}x{sh})")
+
+            # Template matching
+            result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+            self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
+
+            if max_val >= threshold:
+                # Center of match
+                cx = max_loc[0] + tw / 2.0
+                cy = max_loc[1] + th / 2.0
+                return (True, float(cx), float(cy))
+            else:
+                return (False, 0.0, 0.0)
+        finally:
+            # Clean up screenshot temp file
+            try:
+                os.unlink(screen_path)
+            except Exception:
+                pass
+
     async def _screenshot_match(self, template_path: str, threshold: float,
                                   retry_count: int, retry_delay_ms: int) -> tuple:
         """Try to find template on screen. Returns (success, x, y)."""
@@ -749,19 +858,71 @@ class ScriptExecutor:
             if self._stop_requested:
                 return (False, 0, 0)
             if self.mock_mode:
-                success_chance = 0.7 + (attempt * 0.1)
-                success = attempt > 2 or True
-                self._log("info", f"  [mock] match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold} → {'FOUND' if success else 'NOT FOUND'}")
-                if success:
+                self._log("info", f"  [mock] match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
+                if _OPENCV_AVAILABLE:
+                    # Try real matching even in mock mode (but with dummy screenshot)
+                    found, mx, my = await self._match_template_on_screen(template_path, threshold)
+                    if found:
+                        self.last_match_result = (mx, my)
+                        return (True, mx, my)
+                else:
                     self.last_match_result = (540.0, 1200.0)
+                    self._log("info", f"  [mock] → FOUND (simulated)")
                     return (True, 540.0, 1200.0)
-                if attempt < retry_count - 1:
-                    await asyncio.sleep(retry_delay_ms / 1000)
             else:
                 self._log("info", f"  🔍 match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
-                # TODO: real OpenCV template matching via screencap + python-opencv
+                found, mx, my = await self._match_template_on_screen(template_path, threshold)
+                if found:
+                    self.last_match_result = (mx, my)
+                    self._log("info", f"  ✅ match found at ({mx:.0f}, {my:.0f})")
+                    return (True, mx, my)
+
+            if attempt < retry_count - 1:
+                self._log("info", f"  ⏳ retry in {retry_delay_ms}ms...")
                 await asyncio.sleep(retry_delay_ms / 1000)
         return (False, 0, 0)
+
+    async def _resolve_coords_from_template(self, action: dict) -> tuple:
+        """
+        For tap/swipe/long_press actions that have template_path set,
+        resolve X/Y coordinates by matching template on screen.
+        Returns (x, y) or (x, y, x2, y2) for swipe with two templates.
+
+        If no template_path is set, returns the raw coords from action.
+        """
+        tpl = action.get("template_path", "")
+        if not tpl:
+            # No template — use raw coordinates
+            if action.get("action_type") == "swipe":
+                return (action.get("x", 0), action.get("y", 0),
+                        action.get("x2", 0), action.get("y2", 0))
+            return (action.get("x", 0), action.get("y", 0))
+
+        threshold = action.get("match_threshold", 0.80)
+        retry = action.get("retry_count", 1)
+        retry_delay = action.get("retry_delay_ms", 1000)
+
+        if action.get("action_type") == "swipe":
+            # Swipe: match start point from template
+            found, x1, y1 = await self._screenshot_match(tpl, threshold, retry, retry_delay)
+            if not found:
+                raise RuntimeError(f"Template '{tpl}' not found on screen for swipe start point")
+            # For end point, use explicit x2/y2 or also from a second template
+            tpl2 = action.get("template_path2", "")
+            if tpl2:
+                found2, x2, y2 = await self._screenshot_match(tpl2, threshold, retry, retry_delay)
+                if not found2:
+                    raise RuntimeError(f"Template '{tpl2}' not found on screen for swipe end point")
+            else:
+                x2 = action.get("x2", 0) or x1
+                y2 = action.get("y2", 0) or y1
+            return (x1, y1, x2, y2)
+        else:
+            # Tap or long_press: single point
+            found, x, y = await self._screenshot_match(tpl, threshold, retry, retry_delay)
+            if not found:
+                raise RuntimeError(f"Template '{tpl}' not found on screen for {action.get('action_type')}")
+            return (x, y)
 
     async def _fetch_api(self, url: str, method: str, headers: str, body: str) -> str:
         import httpx
@@ -870,21 +1031,37 @@ class ScriptExecutor:
                     if action_type == "tap":
                         if action.get("use_match_result") and self.last_match_result:
                             await self._tap(*self.last_match_result)
+                        elif action.get("template_path"):
+                            coords = await self._resolve_coords_from_template(action)
+                            await self._tap(coords[0], coords[1])
                         else:
                             await self._tap(action.get("x", 0), action.get("y", 0))
 
                     elif action_type == "swipe":
-                        await self._swipe(
-                            action.get("x", 0), action.get("y", 0),
-                            action.get("x2", 0), action.get("y2", 0),
-                            action.get("duration_ms", 300),
-                        )
+                        if action.get("template_path"):
+                            coords = await self._resolve_coords_from_template(action)
+                            await self._swipe(
+                                coords[0], coords[1], coords[2], coords[3],
+                                action.get("duration_ms", 300),
+                            )
+                        else:
+                            await self._swipe(
+                                action.get("x", 0), action.get("y", 0),
+                                action.get("x2", 0), action.get("y2", 0),
+                                action.get("duration_ms", 300),
+                            )
 
                     elif action_type == "long_press":
-                        await self._long_press(
-                            action.get("x", 0), action.get("y", 0),
-                            action.get("duration_ms", 500),
-                        )
+                        if action.get("template_path"):
+                            coords = await self._resolve_coords_from_template(action)
+                            await self._long_press(coords[0], coords[1],
+                                action.get("duration_ms", 500),
+                            )
+                        else:
+                            await self._long_press(
+                                action.get("x", 0), action.get("y", 0),
+                                action.get("duration_ms", 500),
+                            )
 
                     elif action_type == "screenshot_match":
                         found, mx, my = await self._screenshot_match(

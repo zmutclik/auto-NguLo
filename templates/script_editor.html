@@ -87,7 +87,31 @@
 
                         <!-- Tap / Long Press -->
                         <div x-show="a.action_type === 'tap' || a.action_type === 'long_press'" class="space-y-2 mb-3">
-                            <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">X <span x-show="a.use_match_result" class="text-slate-600">(auto)</span></label><input x-model.number="a.x" :disabled="a.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40"></div><div><label class="text-xs text-slate-500">Y</label><input x-model.number="a.y" :disabled="a.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40"></div></div>
+                            <!-- Template Image Picker -->
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Template Image <span class="text-slate-600">(auto-detect X,Y)</span></label>
+                                <div class="flex items-center gap-2">
+                                    <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih gambar untuk auto-detect koordinat...">
+                                    <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
+                                </div>
+                                <p class="text-xs text-slate-600 mt-1">Kosongkan untuk menggunakan koordinat manual di bawah</p>
+                                <!-- Template preview -->
+                                <div x-show="a.template_path" class="mt-2 bg-slate-800 border border-dashed border-slate-600 rounded-lg h-20 flex items-center justify-center text-slate-500 text-sm overflow-hidden">
+                                    <img :src="'/static/' + a.template_path" class="max-h-full max-w-full object-contain" alt="Template preview">
+                                </div>
+                            </div>
+                            <!-- Manual Coords & Template Match Config -->
+                            <div x-show="a.template_path">
+                                <div class="grid grid-cols-2 gap-3 bg-slate-800/50 rounded-lg p-3 border border-slate-700/30">
+                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Match Threshold (0-1)</label><input x-model.number="a.match_threshold" type="number" min="0" max="1" step="0.05" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Retry Count</label><input x-model.number="a.retry_count" type="number" min="1" max="99" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                    <div class="col-span-2"><label class="block text-xs font-medium text-slate-500 mb-1">Retry Delay (ms)</label><input x-model.number="a.retry_delay_ms" type="number" min="0" step="100" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                </div>
+                            </div>
+                            <!-- Manual Coordinates -->
+                            <div x-show="!a.template_path && !a.use_match_result">
+                                <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">X <span x-show="a.use_match_result" class="text-slate-600">(auto)</span></label><input x-model.number="a.x" :disabled="a.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40"></div><div><label class="text-xs text-slate-500">Y</label><input x-model.number="a.y" :disabled="a.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40"></div></div>
+                            </div>
                             <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
                                 <input type="checkbox" x-model="a.use_match_result" class="rounded bg-slate-800 border-surface-border text-brand focus:ring-brand"> Use result from previous Match action
                             </label>
@@ -96,7 +120,40 @@
 
                         <!-- Swipe -->
                         <div x-show="a.action_type === 'swipe'" class="space-y-2 mb-3">
-                            <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">From X</label><input x-model.number="a.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">From Y</label><input x-model.number="a.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To X</label><input x-model.number="a.x2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To Y</label><input x-model.number="a.y2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div></div>
+                            <!-- Template Image for Start Point -->
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Template Image (Start) <span class="text-slate-600">(auto-detect from X,Y)</span></label>
+                                <div class="flex items-center gap-2">
+                                    <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih gambar untuk auto-detect start point...">
+                                    <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
+                                </div>
+                                <div x-show="a.template_path" class="mt-2 bg-slate-800 border border-dashed border-slate-600 rounded-lg h-20 flex items-center justify-center text-slate-500 text-sm overflow-hidden">
+                                    <img :src="'/static/' + a.template_path" class="max-h-full max-w-full object-contain" alt="Start template preview">
+                                </div>
+                            </div>
+                            <!-- Template Image for End Point -->
+                            <div x-show="a.template_path">
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Template Image (End) <span class="text-slate-600">(auto-detect to X,Y)</span></label>
+                                <div class="flex items-center gap-2">
+                                    <input x-model="a.template_path2" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih gambar untuk auto-detect end point...">
+                                    <button type="button" @click="openTemplatePicker2(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
+                                </div>
+                                <div x-show="a.template_path2" class="mt-2 bg-slate-800 border border-dashed border-slate-600 rounded-lg h-20 flex items-center justify-center text-slate-500 text-sm overflow-hidden">
+                                    <img :src="'/static/' + a.template_path2" class="max-h-full max-w-full object-contain" alt="End template preview">
+                                </div>
+                            </div>
+                            <!-- Template Match Config -->
+                            <div x-show="a.template_path">
+                                <div class="grid grid-cols-2 gap-3 bg-slate-800/50 rounded-lg p-3 border border-slate-700/30">
+                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Match Threshold (0-1)</label><input x-model.number="a.match_threshold" type="number" min="0" max="1" step="0.05" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Retry Count</label><input x-model.number="a.retry_count" type="number" min="1" max="99" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                    <div class="col-span-2"><label class="block text-xs font-medium text-slate-500 mb-1">Retry Delay (ms)</label><input x-model.number="a.retry_delay_ms" type="number" min="0" step="100" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                </div>
+                            </div>
+                            <!-- Manual Coordinates -->
+                            <div x-show="!a.template_path">
+                                <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">From X</label><input x-model.number="a.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">From Y</label><input x-model.number="a.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To X</label><input x-model.number="a.x2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To Y</label><input x-model.number="a.y2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div></div>
+                            </div>
                             <div><label class="text-xs text-slate-500">Duration (ms)</label><input x-model.number="a.duration_ms" type="number" min="50" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
                         </div>
 
@@ -317,11 +374,19 @@
             // Template picker modal state
             showTemplateModal: false,
             tplPickerAction: null,
+            tplPickerField: 'template_path',  // 'template_path' or 'template_path2'
             templateList: [],
             uploadingTpl: false,
 
             async openTemplatePicker(action) {
                 this.tplPickerAction = action;
+                this.tplPickerField = 'template_path';
+                this.showTemplateModal = true;
+                await this.loadTemplateList();
+            },
+            async openTemplatePicker2(action) {
+                this.tplPickerAction = action;
+                this.tplPickerField = 'template_path2';
                 this.showTemplateModal = true;
                 await this.loadTemplateList();
             },
@@ -338,10 +403,11 @@
             },
             selectTemplate(tpl) {
                 if (this.tplPickerAction) {
-                    this.tplPickerAction.template_path = tpl.path;
+                    this.tplPickerAction[this.tplPickerField] = tpl.path;
                 }
                 this.showTemplateModal = false;
                 this.tplPickerAction = null;
+                this.tplPickerField = 'template_path';
             },
             async uploadTemplateFromModal(event) {
                 const file = event.target.files[0];
@@ -354,7 +420,7 @@
                     if (!r.ok) { const err = await r.json(); throw new Error(err.detail || 'Upload failed'); }
                     const data = await r.json();
                     if (this.tplPickerAction) {
-                        this.tplPickerAction.template_path = data.path;
+                        this.tplPickerAction[this.tplPickerField] = data.path;
                     }
                     this.showTemplateModal = false;
                     this.tplPickerAction = null;
@@ -404,7 +470,7 @@
                 this.$nextTick(() => this.initSortable());
             },
             addAction() {
-                this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false });
+                this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',template_path2:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false });
             },
             deleteAction(idx) { this.actions.splice(idx, 1); },
             async save() {
@@ -432,7 +498,7 @@
                     const payload = {
                         name: a.name, action_type: a.action_type,
                         x: a.x, y: a.y, x2: a.x2, y2: a.y2, duration_ms: a.duration_ms,
-                        template_path: a.template_path, match_threshold: a.match_threshold,
+                        template_path: a.template_path, template_path2: a.template_path2, match_threshold: a.match_threshold,
                         retry_count: a.retry_count, retry_delay_ms: a.retry_delay_ms,
                         jump_on_success: a.jump_on_success, jump_on_fail: a.jump_on_fail,
                         key_code: a.key_code === 'CUSTOM' ? (a._custom_key != null ? String(a._custom_key) : 'CUSTOM') : a.key_code, combo_action: a.combo_action,

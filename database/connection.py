@@ -54,6 +54,7 @@ async def init_db():
             duration_ms     INTEGER DEFAULT 300,
             -- screenshot match
             template_path   TEXT DEFAULT '',
+            template_path2  TEXT DEFAULT '',
             match_threshold REAL DEFAULT 0.80,
             retry_count     INTEGER DEFAULT 1,
             retry_delay_ms  INTEGER DEFAULT 1000,
@@ -105,6 +106,13 @@ async def init_db():
         INSERT OR IGNORE INTO config (key, value) VALUES ('password', '123456');
     """)
     await db.commit()
+
+    # Migration: add template_path2 column if it doesn't exist (v1.1+)
+    try:
+        await db.execute("ALTER TABLE actions ADD COLUMN template_path2 TEXT DEFAULT ''")
+        await db.commit()
+    except Exception:
+        pass  # column already exists
 
 
 async def close_db():
