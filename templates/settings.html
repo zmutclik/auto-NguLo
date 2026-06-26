@@ -94,6 +94,142 @@
     </button>
 </div>
 
+<!-- ADB Management -->
+<div class="bg-surface-card border border-surface-border rounded-2xl p-6 mb-6 shadow-md"
+     x-data="adbManager()" x-init="fetchDevices()">
+    <h2 class="font-semibold flex items-center gap-2 mb-6"><span class="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-400">🔗</span> ADB Management</h2>
+
+    <!-- ADB Info Bar -->
+    <div class="flex flex-wrap items-center gap-3 mb-6 bg-slate-800/50 rounded-xl p-4">
+        <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-500">ADB Version:</span>
+            <span class="text-sm text-slate-300 font-mono" x-text="adbInfo.version || '\u2014'"></span>
+        </div>
+        <div class="w-px h-5 bg-surface-border hidden sm:block"></div>
+        <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-500">Server:</span>
+            <span class="text-sm font-medium flex items-center gap-1.5"
+                  :class="adbInfo.server_state === 'device' ? 'text-success' : 'text-warning'">
+                <span class="w-2 h-2 rounded-full"
+                      :class="adbInfo.server_state === 'device' ? 'bg-success' : 'bg-warning'"></span>
+                <span x-text="adbInfo.server_state || '\u2014'"></span>
+            </span>
+        </div>
+        <div class="w-px h-5 bg-surface-border hidden sm:block"></div>
+        <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-500">Devices:</span>
+            <span class="text-sm text-slate-300 font-semibold" x-text="adbInfo.connected_devices || 0"></span>
+        </div>
+        <button @click="fetchAdbInfo(); fetchDevices()"
+                class="ml-auto text-xs text-brand hover:underline">🔄 Refresh</button>
+    </div>
+
+    <!-- Connected Devices List -->
+    <div class="mb-6">
+        <h3 class="text-sm font-semibold text-slate-400 mb-3 flex items-center gap-2">📋 Connected Devices</h3>
+        <div x-show="devices.length === 0" class="text-sm text-slate-500 bg-slate-800/30 rounded-xl p-4 text-center">
+            No devices connected. Use Pair or Connect below.
+        </div>
+        <template x-for="d in devices" :key="d.serial">
+            <div class="flex items-center justify-between bg-slate-800/50 rounded-xl p-3 mb-2">
+                <div class="flex items-center gap-3">
+                    <span x-text="d.type === 'wireless' ? '📡' : '🔌'" class="text-lg"></span>
+                    <div>
+                        <p class="text-sm font-medium text-slate-200" x-text="d.serial"></p>
+                        <p class="text-xs text-slate-500">
+                            <span x-text="d.model || 'Unknown'"></span>
+                            <span class="mx-1">•</span>
+                            <span :class="d.status === 'device' ? 'text-success' : 'text-warning'"
+                                  x-text="d.status === 'device' ? 'online' : d.status"></span>
+                            <span class="mx-1">•</span>
+                            <span x-text="d.type"></span>
+                        </p>
+                    </div>
+                </div>
+                <button x-show="d.type === 'wireless'"
+                        @click="disconnectDevice(d.serial)"
+                        class="text-xs text-danger hover:bg-danger/10 border border-danger/20 rounded-lg px-3 py-1.5 transition-colors">
+                    Disconnect
+                </button>
+            </div>
+        </template>
+    </div>
+
+    <!-- Pair & Connect Tabs -->
+    <div class="grid sm:grid-cols-2 gap-6">
+        <!-- Pair (Wireless Debugging) -->
+        <div class="bg-slate-800/30 rounded-xl p-5 border border-surface-border">
+            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">🤝 Pair Device</h3>
+            <form @submit.prevent="pairDevice()" class="space-y-3">
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">IP Address</label>
+                    <input x-model="pairForm.ip" type="text" placeholder="192.168.1.100"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Port</label>
+                    <input x-model="pairForm.port" type="number" placeholder="5555"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Pairing Code</label>
+                    <input x-model="pairForm.code" type="text" placeholder="123456" maxlength="6"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 font-mono tracking-widest">
+                </div>
+                <button type="submit" :disabled="pairForm.loading"
+                        class="w-full bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-wait">
+                    <span x-show="!pairForm.loading">🤝 Pair</span>
+                    <span x-show="pairForm.loading">⏳ Pairing...</span>
+                </button>
+            </form>
+            <!-- Pair Result -->
+            <div x-show="pairForm.result" x-transition
+                 :class="pairForm.ok ? 'bg-success/10 border-success/30 text-success' : 'bg-red-500/10 border-red-500/30 text-red-400'"
+                 class="rounded-lg px-4 py-3 text-sm mt-3 border">
+                <span x-text="pairForm.result"></span>
+            </div>
+        </div>
+
+        <!-- Connect -->
+        <div class="bg-slate-800/30 rounded-xl p-5 border border-surface-border">
+            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">🔌 Connect Device</h3>
+            <form @submit.prevent="connectDevice()" class="space-y-3">
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">IP Address</label>
+                    <input x-model="connectForm.ip" type="text" placeholder="192.168.1.100"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand/50">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Port</label>
+                    <input x-model="connectForm.port" type="number" placeholder="5555"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand/50">
+                </div>
+                <button type="submit" :disabled="connectForm.loading"
+                        class="w-full bg-brand hover:bg-brand-hover text-white font-medium rounded-lg px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-wait">
+                    <span x-show="!connectForm.loading">🔌 Connect</span>
+                    <span x-show="connectForm.loading">⏳ Connecting...</span>
+                </button>
+            </form>
+            <!-- Connect Result -->
+            <div x-show="connectForm.result" x-transition
+                 :class="connectForm.ok ? 'bg-success/10 border-success/30 text-success' : 'bg-red-500/10 border-red-500/30 text-red-400'"
+                 class="rounded-lg px-4 py-3 text-sm mt-3 border">
+                <span x-text="connectForm.result"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Disconnect All -->
+    <div class="mt-6 pt-4 border-t border-surface-border">
+        <button @click="disconnectAll()"
+                class="text-sm text-danger hover:bg-danger/10 border border-danger/20 rounded-lg px-4 py-2 transition-colors">
+            🔌 Disconnect All Wireless
+        </button>
+        <span x-show="disconnectAllMsg" x-text="disconnectAllMsg" class="text-xs text-slate-500 ml-3"></span>
+    </div>
+</div>
+
+<!-- Danger Zone -->
 <div class="bg-surface-card border border-red-500/20 rounded-2xl p-6 shadow-md">
     <h2 class="font-semibold flex items-center gap-2 mb-4"><span class="w-8 h-8 rounded-lg bg-danger/10 flex items-center justify-center text-danger">⚠️</span> Danger Zone</h2>
     <div class="space-y-4">
@@ -127,6 +263,99 @@
                     console.error('Device info fetch failed:', e);
                 } finally {
                     this.loading = false;
+                }
+            }
+        };
+    }
+
+    function adbManager() {
+        return {
+            adbInfo: { version: '', server_state: '', connected_devices: 0 },
+            devices: [],
+            pairForm: { ip: '', port: 5555, code: '', loading: false, result: '', ok: false },
+            connectForm: { ip: '', port: 5555, loading: false, result: '', ok: false },
+            disconnectAllMsg: '',
+
+            async fetchAdbInfo() {
+                try {
+                    const res = await fetch('/api/device/adb-info');
+                    if (res.ok) this.adbInfo = await res.json();
+                } catch (e) { console.error('ADB info fetch failed:', e); }
+            },
+
+            async fetchDevices() {
+                try {
+                    const res = await fetch('/api/device/devices');
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.devices = data.devices || [];
+                        this.adbInfo.connected_devices = data.count || this.devices.length;
+                    }
+                } catch (e) { console.error('Device list fetch failed:', e); }
+                await this.fetchAdbInfo();
+            },
+
+            async pairDevice() {
+                this.pairForm.loading = true;
+                this.pairForm.result = '';
+                try {
+                    const res = await fetch('/api/device/pair', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ip: this.pairForm.ip, port: parseInt(this.pairForm.port) || 5555, pairing_code: this.pairForm.code })
+                    });
+                    const data = await res.json();
+                    this.pairForm.ok = res.ok;
+                    this.pairForm.result = res.ok ? (data.message || 'Paired!') : (data.detail || 'Pair failed');
+                    if (res.ok) {
+                        this.pairForm.ip = ''; this.pairForm.code = '';
+                        setTimeout(() => this.fetchDevices(), 2000);
+                    }
+                } catch (e) {
+                    this.pairForm.ok = false;
+                    this.pairForm.result = 'Network error';
+                } finally { this.pairForm.loading = false; }
+            },
+
+            async connectDevice() {
+                this.connectForm.loading = true;
+                this.connectForm.result = '';
+                try {
+                    const res = await fetch('/api/device/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ip: this.connectForm.ip, port: parseInt(this.connectForm.port) || 5555 })
+                    });
+                    const data = await res.json();
+                    this.connectForm.ok = res.ok;
+                    this.connectForm.result = res.ok ? (data.message || 'Connected!') : (data.detail || 'Connect failed');
+                    if (res.ok) {
+                        this.connectForm.ip = '';
+                        setTimeout(() => this.fetchDevices(), 2000);
+                    }
+                } catch (e) {
+                    this.connectForm.ok = false;
+                    this.connectForm.result = 'Network error';
+                } finally { this.connectForm.loading = false; }
+            },
+
+            async disconnectDevice(serial) {
+                if (!confirm(`Disconnect ${serial}?`)) return;
+                try {
+                    await fetch(`/api/device/disconnect/${encodeURIComponent(serial)}`, { method: 'DELETE' });
+                    await this.fetchDevices();
+                } catch (e) { console.error('Disconnect failed:', e); }
+            },
+
+            async disconnectAll() {
+                this.disconnectAllMsg = 'Disconnecting...';
+                try {
+                    await fetch('/api/device/disconnect/all', { method: 'DELETE' });
+                    this.disconnectAllMsg = 'All wireless devices disconnected.';
+                    await this.fetchDevices();
+                    setTimeout(() => this.disconnectAllMsg = '', 3000);
+                } catch (e) {
+                    this.disconnectAllMsg = 'Failed to disconnect all.';
                 }
             }
         };
