@@ -3,8 +3,6 @@
 **Android Automation Manager** — Aplikasi web untuk membuat, mengelola, dan mengeksekusi script otomatisasi perangkat Android. Didesain untuk berjalan di lingkungan **Termux** (Android) dan dapat diakses melalui browser dari perangkat manapun.
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
-![Python](https://img.shields.io/badge/python-3.10+-green)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-teal)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
 ---
@@ -33,10 +31,7 @@
   - [History Eksekusi](#history-eksekusi)
   - [Settings — Ubah Password](#settings--ubah-password)
 - [Jenis Action](#-jenis-action)
-- [API Endpoints (Ringkasan)](#-api-endpoints-ringkasan)
 - [Troubleshooting](#-troubleshooting)
-- [Struktur Project](#-struktur-project)
-- [Pengembangan](#-pengembangan)
 - [Lisensi](#-lisensi)
 
 ---
@@ -71,7 +66,7 @@
 ### 1. Clone Project
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/zmutclik/auto-NguLo
 cd auto-NguLo
 ```
 
@@ -92,23 +87,10 @@ source venv/bin/activate      # Linux / macOS / Termux
 pip install -r requirements.txt
 ```
 
-**Isi `requirements.txt`:**
-```
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-aiosqlite>=0.20.0
-PyJWT>=2.8.0
-httpx>=0.27.0
-pydantic>=2.0.0
-jinja2>=3.1.0
-python-multipart>=0.0.9
-aiofiles>=24.0.0
-```
-
-> Jika ada kendala instalasi `uvicorn` di Termux, jalankan:
+> Jika ada kendala instalasi di Termux, jalankan:
 > ```bash
 > pkg install binutils build-essential python
-> pip install --no-cache-dir uvicorn
+> pip install --no-cache-dir -r requirements.txt
 > ```
 
 ---
@@ -166,12 +148,6 @@ source venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-| Flag | Keterangan |
-|------|------------|
-| `--host 0.0.0.0` | Mendengarkan di semua interface (wajib untuk akses LAN) |
-| `--port 8000` | Port server |
-| `--reload` | Auto-restart saat kode berubah (nonaktifkan di production) |
-
 ### Cara 3: Background Service (Termux:Boot)
 
 Jalankan server sebagai background service agar otomatis menyala saat Termux boot:
@@ -215,19 +191,6 @@ hostname -I
 ```
 
 > 💡 Contoh: jika IP Termux adalah `192.168.1.10`, buka `http://192.168.1.10:8000` dari laptop atau HP lain.
-
-### Testing API dari Terminal
-
-```bash
-# Login & ambil token
-curl -s -X POST http://localhost:8000/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"password":"123456"}'
-
-# Cek status auth
-curl http://localhost:8000/api/auth/check \
-  -H 'Cookie: angulo_token=<TOKEN>'
-```
 
 ---
 
@@ -415,47 +378,7 @@ Simulasikan pengetikan karakter per karakter.
 
 ---
 
-## 🔌 API Endpoints (Ringkasan)
 
-### Authentication
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `POST` | `/api/auth/login` | Login dengan password, dapatkan token |
-| `PUT` | `/api/auth/password` | Ubah password |
-| `GET` | `/api/auth/check` | Cek status login |
-
-### Scripts
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `GET` | `/api/scripts` | List semua script |
-| `POST` | `/api/scripts` | Buat script baru |
-| `GET` | `/api/scripts/{id}` | Detail script + actions |
-| `PUT` | `/api/scripts/{id}` | Update metadata script |
-| `DELETE` | `/api/scripts/{id}` | Hapus script (cascade) |
-
-### Actions
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `GET` | `/api/scripts/{id}/actions` | List actions |
-| `POST` | `/api/scripts/{id}/actions` | Tambah action |
-| `PUT` | `/api/scripts/{id}/actions/{aid}` | Update action |
-| `DELETE` | `/api/scripts/{id}/actions/{aid}` | Hapus action |
-
-### Execution
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `POST` | `/api/scripts/{id}/execute` | Jalankan script |
-| `GET` | `/api/scripts/{id}/stream/{log_id}` | SSE live log |
-| `POST` | `/api/scripts/{id}/stop` | Hentikan eksekusi |
-
-### History
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `GET` | `/api/history` | Riwayat eksekusi |
-| `DELETE` | `/api/history` | Hapus semua history |
-| `DELETE` | `/api/history/{log_id}` | Hapus satu entry |
-
----
 
 ## 🔧 Troubleshooting
 
@@ -471,76 +394,6 @@ Simulasikan pengetikan karakter per karakter.
 | **Script tidak berjalan** | Cek mode: saat ini **mock mode** — koordinat tap/swipe tidak benar-benar menyentuh layar |
 
 ---
-
-## 📁 Struktur Project
-
-```
-auto-NguLo/
-├── main.py                    # Entry point FastAPI + page routes
-├── config.py                  # Konfigurasi (env vars)
-├── requirements.txt           # Dependencies Python
-├── start.sh                   # Script cepat untuk menjalankan server
-│
-├── database/
-│   └── connection.py          # Koneksi async SQLite + schema
-│
-├── engine/
-│   └── executor.py            # ScriptExecutor — eksekusi action
-│
-├── middleware/
-│   └── auth_middleware.py      # JWT auth middleware
-│
-├── routers/
-│   ├── auth.py                # Endpoint login & password
-│   ├── scripts.py             # CRUD scripts
-│   ├── actions.py             # CRUD actions
-│   └── executor.py            # Eksekusi & SSE streaming
-│
-├── schemas/
-│   └── requests.py            # Pydantic models
-│
-├── templates/                 # Jinja2 HTML (UI web)
-│   ├── base.html              # Layout utama
-│   ├── login.html             # Halaman login
-│   ├── dashboard.html         # Daftar script
-│   ├── script_editor.html     # Editor script
-│   ├── execution.html         # Live log
-│   ├── history.html           # Riwayat
-│   └── settings.html          # Ubah password
-│
-├── data/                      # Runtime data (auto-created)
-│   ├── angulo.db              # SQLite database
-│   ├── templates/             # Screenshot templates
-│   ├── screenshots/           # Hasil screenshot
-│   └── logs/                  # File log
-│
-└── wireframes/                # Wireframe desain awal
-```
-
----
-
-## 🔧 Pengembangan
-
-### Mode Mock vs Real
-
-Saat ini executor berjalan dalam **mock mode** (`mock_mode=True` di `routers/executor.py`):
-- Semua action Android **disimulasikan** — cocok untuk testing UI
-- Screenshot matching selalu sukses dengan koordinat mock
-- Tidak membutuhkan device Android atau ADB
-
-Untuk mode **real** (produksi), perlu implementasi:
-- ADB shell commands (`adb shell input tap/swipe/keyevent`)
-- OpenCV untuk template matching (`cv2.matchTemplate`)
-- UiAutomator2 untuk kontrol device Android
-
-### Database Schema
-
-| Tabel | Isi |
-|-------|-----|
-| `config` | Key-value store (password, settings) |
-| `scripts` | Metadata script (nama, repeat, delay) |
-| `actions` | Langkah script (tipe, koordinat, parameter) |
-| `execution_logs` | Log hasil eksekusi (status, statistik, log JSON) |
 
 ---
 
