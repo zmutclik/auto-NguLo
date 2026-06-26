@@ -209,11 +209,43 @@
                         <!-- Screenshot Match -->
                         <div x-show="a.action_type === 'screenshot_match'" class="space-y-3 mb-3">
                             <div>
-                                <label class="block text-xs font-medium text-slate-500 mb-1">Template Image</label>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Template Image <span class="text-slate-600">(drag pada gambar untuk pilih match region)</span></label>
                                 <div class="flex items-center gap-2">
                                     <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Pilih gambar template...">
                                     <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
                                 </div>
+                                <!-- Interactive template preview — drag to select match region -->
+                                <div x-show="a.template_path" class="mt-2 bg-slate-900 border border-dashed border-slate-600 rounded-xl overflow-hidden relative cursor-crosshair"
+                                     @mousedown.prevent="startMatchRegionDrag(a, $event)"
+                                     @touchstart.prevent="startMatchRegionDrag(a, $event)"
+                                     @contextmenu.prevent="clearMatchRegion(a)">
+                                    <img :src="'/static/' + a.template_path" class="w-full h-auto block select-none pointer-events-none" alt="Template preview" draggable="false">
+                                    <!-- Region rectangle overlay -->
+                                    <div x-show="a._regionDragging || (a.match_region_x != null && a.match_region_w != null)"
+                                         class="absolute pointer-events-none border-2 border-warning bg-warning/10 shadow-lg shadow-warning/20"
+                                         :style="matchRegionRectStyle(a)">
+                                    </div>
+                                    <!-- Region info label -->
+                                    <div x-show="a.match_region_x != null && a.match_region_w != null" class="absolute top-2 left-2 bg-black/70 text-warning text-xs px-2 py-1.5 rounded-lg font-mono pointer-events-none shadow-lg backdrop-blur-sm space-y-0.5">
+                                        <div>📍 X:<span x-text="Math.round(a.match_region_x)" class="font-bold"></span> Y:<span x-text="Math.round(a.match_region_y)" class="font-bold"></span></div>
+                                        <div>📐 W:<span x-text="Math.round(a.match_region_w)" class="font-bold"></span> H:<span x-text="Math.round(a.match_region_h)" class="font-bold"></span></div>
+                                    </div>
+                                    <!-- Hint when no region selected -->
+                                    <div x-show="a.match_region_x == null" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <span class="text-slate-500 text-sm bg-black/40 px-3 py-1 rounded-lg backdrop-blur-sm">🖱️ Drag untuk pilih area match · Klik kanan untuk hapus</span>
+                                    </div>
+                                </div>
+                                <!-- Region fields + clear (appear when region active) -->
+                                <div x-show="a.match_region_x != null && a.match_region_w != null" class="mt-2 space-y-2">
+                                    <div class="grid grid-cols-4 gap-2">
+                                        <div><label class="text-xs text-slate-500">X</label><input x-model.number="a.match_region_x" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-warning font-mono"></div>
+                                        <div><label class="text-xs text-slate-500">Y</label><input x-model.number="a.match_region_y" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-warning font-mono"></div>
+                                        <div><label class="text-xs text-slate-500">W</label><input x-model.number="a.match_region_w" type="number" min="1" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-warning font-mono"></div>
+                                        <div><label class="text-xs text-slate-500">H</label><input x-model.number="a.match_region_h" type="number" min="1" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-warning font-mono"></div>
+                                    </div>
+                                    <button @click="clearMatchRegion(a)" class="text-xs text-slate-500 hover:text-danger transition-colors cursor-pointer">🗑️ Clear region (cari seluruh layar)</button>
+                                </div>
+                                <div x-show="!a.template_path" class="mt-2 bg-slate-800 border border-dashed border-slate-600 rounded-lg h-20 flex items-center justify-center text-slate-500 text-sm">🖼️ Pilih template image dulu</div>
                             </div>
                             <div class="grid grid-cols-2 gap-3">
                                 <div><label class="block text-xs font-medium text-slate-500 mb-1">Threshold (0-1)</label><input x-model.number="a.match_threshold" type="number" min="0" max="1" step="0.05" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
@@ -247,12 +279,6 @@
                                 </div>
                             </div>
 
-                            <div class="bg-slate-800 border border-dashed border-slate-600 rounded-lg h-24 flex items-center justify-center text-slate-500 text-sm overflow-hidden">
-                                <template x-if="a.template_path">
-                                    <img :src="'/static/' + a.template_path" class="max-h-full max-w-full object-contain" alt="Template preview">
-                                </template>
-                                <span x-show="!a.template_path">🖼️ Template preview</span>
-                            </div>
                         </div>
 
                         <!-- Wait -->
@@ -422,22 +448,99 @@
             actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text'],
             typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝'}[t]||'❓'; },
 
+            // ---- Match region drag on template image ----
+            matchRegionRectStyle(a) {
+                const refW = this.deviceResolution.w;
+                const refH = this.deviceResolution.h;
+                let rx, ry, rw, rh;
+                if (a._regionDragging && a._regionStartX != null) {
+                    rx = Math.min(a._regionStartX, a._regionCurX);
+                    ry = Math.min(a._regionStartY, a._regionCurY);
+                    rw = Math.abs(a._regionCurX - a._regionStartX);
+                    rh = Math.abs(a._regionCurY - a._regionStartY);
+                } else if (a.match_region_x != null && a.match_region_w != null) {
+                    rx = a.match_region_x;
+                    ry = a.match_region_y;
+                    rw = a.match_region_w;
+                    rh = a.match_region_h;
+                } else {
+                    return 'display:none';
+                }
+                return `left:${(rx/refW)*100}%;top:${(ry/refH)*100}%;width:${(rw/refW)*100}%;height:${(rh/refH)*100}%`;
+            },
+            startMatchRegionDrag(action, event) {
+                const container = event.target.closest('.overflow-hidden');
+                const img = container?.querySelector('img');
+                if (!img) return;
+                const rect = img.getBoundingClientRect();
+                const refW = this.deviceResolution.w;
+                const refH = this.deviceResolution.h;
+                const getCoords = (e) => {
+                    const r = img.getBoundingClientRect();
+                    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+                    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+                    const px = ((cx - r.left) / r.width) * 100;
+                    const py = ((cy - r.top) / r.height) * 100;
+                    return {
+                        x: Math.round((px / 100) * refW),
+                        y: Math.round((py / 100) * refH),
+                    };
+                };
+                const start = getCoords(event);
+                action._regionStartX = start.x;
+                action._regionStartY = start.y;
+                action._regionCurX = start.x;
+                action._regionCurY = start.y;
+                action._regionDragging = true;
+
+                const onMove = (e) => {
+                    const mc = getCoords(e);
+                    if (mc) { action._regionCurX = mc.x; action._regionCurY = mc.y; }
+                };
+                const onUp = (e) => {
+                    const mc = getCoords(e);
+                    if (mc) { action._regionCurX = mc.x; action._regionCurY = mc.y; }
+                    action._regionDragging = false;
+                    action.match_region_x = Math.min(action._regionStartX, action._regionCurX);
+                    action.match_region_y = Math.min(action._regionStartY, action._regionCurY);
+                    action.match_region_w = Math.abs(action._regionCurX - action._regionStartX);
+                    action.match_region_h = Math.abs(action._regionCurY - action._regionStartY);
+                    if (action.match_region_w < 5 || action.match_region_h < 5) {
+                        // too small → clear
+                        this.clearMatchRegion(action);
+                    }
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    document.removeEventListener('touchmove', onMove);
+                    document.removeEventListener('touchend', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+                document.addEventListener('touchmove', onMove, {passive: false});
+                document.addEventListener('touchend', onUp);
+            },
+            clearMatchRegion(action) {
+                action.match_region_x = null;
+                action.match_region_y = null;
+                action.match_region_w = null;
+                action.match_region_h = null;
+                action._regionDragging = false;
+                action._regionStartX = null;
+                action._regionStartY = null;
+                action._regionCurX = null;
+                action._regionCurY = null;
+            },
+
             // Template picker modal state
             showTemplateModal: false,
             tplPickerAction: null,
-            tplPickerField: 'template_path',  // 'template_path' or 'template_path2'
+            tplPickerField: 'template_path',
             templateList: [],
             uploadingTpl: false,
 
             async openTemplatePicker(action) {
                 this.tplPickerAction = action;
                 this.tplPickerField = 'template_path';
-                this.showTemplateModal = true;
-                await this.loadTemplateList();
-            },
-            async openTemplatePicker2(action) {
-                this.tplPickerAction = action;
-                this.tplPickerField = 'template_path2';
                 this.showTemplateModal = true;
                 await this.loadTemplateList();
             },
@@ -552,7 +655,7 @@
                 this.$nextTick(() => this.initSortable());
             },
             addAction() {
-                this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',template_path2:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false,
+                this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',template_path2:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',match_region_x:null,match_region_y:null,match_region_w:null,match_region_h:null,key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false,
                     // coordinate picker state
                     _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
                     _pickPctX: null, _pickPctY: null, _swiping: false,
@@ -589,6 +692,8 @@
                         template_path: a.template_path, template_path2: a.template_path2, match_threshold: a.match_threshold,
                         retry_count: a.retry_count, retry_delay_ms: a.retry_delay_ms,
                         jump_on_success: a.jump_on_success, jump_on_fail: a.jump_on_fail,
+                        match_region_x: a.match_region_x, match_region_y: a.match_region_y,
+                        match_region_w: a.match_region_w, match_region_h: a.match_region_h,
                         key_code: a.key_code === 'CUSTOM' ? (a._custom_key != null ? String(a._custom_key) : 'CUSTOM') : a.key_code, combo_action: a.combo_action,
                         api_url: a.api_url, api_method: a.api_method, api_headers: '{}',
                         api_body: '', api_save_to_var: a.api_save_to_var,

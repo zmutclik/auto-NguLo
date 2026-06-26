@@ -792,11 +792,15 @@ class ScriptExecutor:
             raise RuntimeError(f"Failed to capture screenshot: {e}")
         return tmp_path
 
-    async def _match_template_on_screen(self, template_path: str, threshold: float) -> tuple:
+    async def _match_template_on_screen(self, template_path: str, threshold: float,
+                                          region: tuple = None) -> tuple:
         """
         Match a template image against current screen.
         Returns (found: bool, x: float, y: float).
-        x, y are the center coordinates of the match.
+        x, y are the center coordinates of the match (in full-screen coords).
+
+        If region=(rx, ry, rw, rh) is provided, only search that crop area.
+        Returned coordinates are relative to the full screen, not the crop.
         """
         if not _OPENCV_AVAILABLE:
             self._log("warn", "  ⚠️ OpenCV not installed, cannot do real template matching. Install: pip install opencv-python numpy")
@@ -828,8 +832,24 @@ class ScriptExecutor:
             th, tw = template.shape[:2]
             sh, sw = screen.shape[:2]
 
+            # Apply region crop if specified
+            region_offset_x, region_offset_y = 0, 0
+            if region is not None:
+                rx, ry, rw, rh = region
+                # Clamp to screen bounds
+                rx = max(0, int(rx))
+                ry = max(0, int(ry))
+                rw = min(int(rw), sw - rx)
+                rh = min(int(rh), sh - ry)
+                if rw <= 0 or rh <= 0:
+                    raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw},{rh}) — not within screen {sw}x{sh}")
+                screen = screen[ry:ry+rh, rx:rx+rw]
+                region_offset_x, region_offset_y = rx, ry
+                sh, sw = screen.shape[:2]
+                self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw} h={rh} (screen {region_offset_x+sw}x{region_offset_y+sh})")
+
             if tw > sw or th > sh:
-                raise RuntimeError(f"Template ({tw}x{th}) is larger than screen ({sw}x{sh})")
+                raise RuntimeError(f"Template ({tw}x{th}) is larger than search area ({sw}x{sh})")
 
             # Template matching
             result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
@@ -838,9 +858,9 @@ class ScriptExecutor:
             self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
 
             if max_val >= threshold:
-                # Center of match
-                cx = max_loc[0] + tw / 2.0
-                cy = max_loc[1] + th / 2.0
+                # Center of match — add region offset so coords are full-screen
+                cx = region_offset_x + max_loc[0] + tw / 2.0
+                cy = region_offset_y + max_loc[1] + th / 2.0
                 return (True, float(cx), float(cy))
             else:
                 return (False, 0.0, 0.0)
@@ -852,7 +872,8 @@ class ScriptExecutor:
                 pass
 
     async def _screenshot_match(self, template_path: str, threshold: float,
-                                  retry_count: int, retry_delay_ms: int) -> tuple:
+                                  retry_count: int, retry_delay_ms: int,
+                                  region: tuple = None) -> tuple:
         """Try to find template on screen. Returns (success, x, y)."""
         for attempt in range(retry_count):
             if self._stop_requested:
@@ -861,7 +882,7 @@ class ScriptExecutor:
                 self._log("info", f"  [mock] match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
                 if _OPENCV_AVAILABLE:
                     # Try real matching even in mock mode (but with dummy screenshot)
-                    found, mx, my = await self._match_template_on_screen(template_path, threshold)
+                    found, mx, my = await self._match_template_on_screen(template_path, threshold, region)
                     if found:
                         self.last_match_result = (mx, my)
                         return (True, mx, my)
@@ -871,7 +892,7 @@ class ScriptExecutor:
                     return (True, 540.0, 1200.0)
             else:
                 self._log("info", f"  🔍 match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
-                found, mx, my = await self._match_template_on_screen(template_path, threshold)
+                found, mx, my = await self._match_template_on_screen(template_path, threshold, region)
                 if found:
                     self.last_match_result = (mx, my)
                     self._log("info", f"  ✅ match found at ({mx:.0f}, {my:.0f})")
@@ -1067,11 +1088,20 @@ class ScriptExecutor:
                             )
 
                     elif action_type == "screenshot_match":
+                        # Build region tuple if match region is configured
+                        match_region = None
+                        rx = action.get("match_region_x")
+                        ry = action.get("match_region_y")
+                        rw = action.get("match_region_w")
+                        rh = action.get("match_region_h")
+                        if rx is not None and ry is not None and rw is not None and rh is not None:
+                            match_region = (rx, ry, rw, rh)
                         found, mx, my = await self._screenshot_match(
                             action.get("template_path", ""),
                             action.get("match_threshold", 0.80),
                             action.get("retry_count", 1),
                             action.get("retry_delay_ms", 1000),
+                            match_region,
                         )
                         if found:
                             jump_to = action.get("jump_on_success", "")

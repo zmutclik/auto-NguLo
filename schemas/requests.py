@@ -48,6 +48,12 @@ class ActionCreate(BaseModel):
     retry_delay_ms: int = 1000
     jump_on_success: str = ""
     jump_on_fail: str = ""
+    # match region (crop area on screen before matching)
+    match_region_x: Optional[float] = None
+    match_region_y: Optional[float] = None
+    match_region_w: Optional[float] = None
+    match_region_h: Optional[float] = None
+    match_region_screen: str = ""
     # push key
     key_code: str = "HOME"
     # combo
@@ -87,6 +93,11 @@ class ActionUpdate(BaseModel):
     retry_delay_ms: Optional[int] = None
     jump_on_success: Optional[str] = None
     jump_on_fail: Optional[str] = None
+    match_region_x: Optional[float] = None
+    match_region_y: Optional[float] = None
+    match_region_w: Optional[float] = None
+    match_region_h: Optional[float] = None
+    match_region_screen: Optional[str] = None
     key_code: Optional[str] = None
     combo_action: Optional[str] = None
     api_url: Optional[str] = None

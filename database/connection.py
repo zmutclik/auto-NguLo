@@ -60,6 +60,11 @@ async def init_db():
             retry_delay_ms  INTEGER DEFAULT 1000,
             jump_on_success TEXT DEFAULT '',
             jump_on_fail    TEXT DEFAULT '',
+            match_region_x     REAL DEFAULT NULL,
+            match_region_y     REAL DEFAULT NULL,
+            match_region_w     REAL DEFAULT NULL,
+            match_region_h     REAL DEFAULT NULL,
+            match_region_screen TEXT DEFAULT '',
             -- push key
             key_code        TEXT DEFAULT 'HOME',
             -- combo
@@ -113,6 +118,20 @@ async def init_db():
         await db.commit()
     except Exception:
         pass  # column already exists
+
+    # Migration: add match_region columns (v1.2+)
+    for col, col_type in [
+        ('match_region_x', 'REAL DEFAULT NULL'),
+        ('match_region_y', 'REAL DEFAULT NULL'),
+        ('match_region_w', 'REAL DEFAULT NULL'),
+        ('match_region_h', 'REAL DEFAULT NULL'),
+        ('match_region_screen', "TEXT DEFAULT ''"),
+    ]:
+        try:
+            await db.execute(f"ALTER TABLE actions ADD COLUMN {col} {col_type}")
+            await db.commit()
+        except Exception:
+            pass  # column already exists
 
 
 async def close_db():
