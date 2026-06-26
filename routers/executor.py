@@ -7,7 +7,7 @@ import queue
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from database.connection import get_db
-from engine.executor import ScriptExecutor
+from engine.executor import ScriptExecutor, adb_available
 
 router = APIRouter(prefix="/api/scripts/{script_id}", tags=["execution"])
 
@@ -46,8 +46,9 @@ async def execute_script(script_id: int):
     log_id = log_cursor.lastrowid
     await db.commit()
 
-    # Create executor
-    executor = ScriptExecutor(mock_mode=True)
+    # Create executor — auto-detect ADB availability
+    use_mock = not await adb_available()
+    executor = ScriptExecutor(mock_mode=use_mock)
     _active_executors[log_id] = executor
 
     # Build log array

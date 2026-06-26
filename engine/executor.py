@@ -4,10 +4,91 @@ Supports both real (ADB/uiautomator2) and mock mode for Termux dev.
 """
 import asyncio
 import json
+import os
 import time
+import re
 from typing import Callable, Optional
 
-from database.connection import get_db
+# ---- ADB Helper utilities ----
+
+# Combo action → ADB keyevent sequences
+COMBO_KEYS = {
+    "select_all":     ["KEYCODE_CTRL_LEFT", "KEYCODE_A", "KEYCODE_CTRL_LEFT"],
+    "copy":           ["KEYCODE_CTRL_LEFT", "KEYCODE_C", "KEYCODE_CTRL_LEFT"],
+    "paste":          ["KEYCODE_CTRL_LEFT", "KEYCODE_V", "KEYCODE_CTRL_LEFT"],
+    "cut":            ["KEYCODE_CTRL_LEFT", "KEYCODE_X", "KEYCODE_CTRL_LEFT"],
+    "undo":           ["KEYCODE_CTRL_LEFT", "KEYCODE_Z", "KEYCODE_CTRL_LEFT"],
+    "back":           ["KEYCODE_BACK"],
+    "home":           ["KEYCODE_HOME"],
+    "recents":        ["KEYCODE_APP_SWITCH"],
+    "notifications":  ["KEYCODE_NOTIFICATION"],
+    "enter":          ["KEYCODE_ENTER"],
+    "delete":         ["KEYCODE_DEL"],
+    "tab":            ["KEYCODE_TAB"],
+    "escape":         ["KEYCODE_ESCAPE"],
+    "volume_up":      ["KEYCODE_VOLUME_UP"],
+    "volume_down":    ["KEYCODE_VOLUME_DOWN"],
+    "power":          ["KEYCODE_POWER"],
+    "screenshot":     ["KEYCODE_VOLUME_DOWN", "KEYCODE_POWER"],
+}
+
+# Map user-friendly key names → Android KeyEvent constant names
+KEY_NAME_MAP = {
+    "HOME":           "KEYCODE_HOME",
+    "BACK":           "KEYCODE_BACK",
+    "RECENTS":        "KEYCODE_APP_SWITCH",
+    "ENTER":          "KEYCODE_ENTER",
+    "DELETE":         "KEYCODE_DEL",
+    "TAB":            "KEYCODE_TAB",
+    "ESCAPE":         "KEYCODE_ESCAPE",
+    "SPACE":          "KEYCODE_SPACE",
+    "VOLUME_UP":      "KEYCODE_VOLUME_UP",
+    "VOLUME_DOWN":    "KEYCODE_VOLUME_DOWN",
+    "POWER":          "KEYCODE_POWER",
+    "MENU":           "KEYCODE_MENU",
+    "SEARCH":         "KEYCODE_SEARCH",
+    "CAMERA":         "KEYCODE_CAMERA",
+    "FOCUS":          "KEYCODE_FOCUS",
+    "NOTIFICATION":   "KEYCODE_NOTIFICATION",
+    "DPAD_UP":        "KEYCODE_DPAD_UP",
+    "DPAD_DOWN":      "KEYCODE_DPAD_DOWN",
+    "DPAD_LEFT":      "KEYCODE_DPAD_LEFT",
+    "DPAD_RIGHT":     "KEYCODE_DPAD_RIGHT",
+    "DPAD_CENTER":    "KEYCODE_DPAD_CENTER",
+    "MEDIA_PLAY":     "KEYCODE_MEDIA_PLAY",
+    "MEDIA_PAUSE":    "KEYCODE_MEDIA_PAUSE",
+    "MEDIA_NEXT":     "KEYCODE_MEDIA_NEXT",
+    "MEDIA_PREVIOUS": "KEYCODE_MEDIA_PREVIOUS",
+}
+
+
+async def _run_adb(*args, timeout: float = 5.0) -> str | None:
+    """Run ADB command asynchronously, return stdout or None on failure."""
+    try:
+        proc = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                "adb", *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            ),
+            timeout=timeout,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return stdout.decode("utf-8", errors="replace").strip()
+    except (asyncio.TimeoutError, FileNotFoundError, OSError, AttributeError):
+        return None
+
+
+async def adb_available() -> bool:
+    """Check if ADB is available and a device is connected."""
+    out = await _run_adb("devices", timeout=3.0)
+    if not out:
+        return False
+    lines = out.strip().split("\n")
+    for line in lines[1:]:
+        if "\tdevice" in line:
+            return True
+    return False
 
 
 class ScriptExecutor:
@@ -29,11 +110,30 @@ class ScriptExecutor:
 
     def __init__(self, mock_mode: bool = True):
         self.mock_mode = mock_mode
-        self.variables: dict[str, str] = {}    # Runtime variables
-        self.last_match_result: tuple[float, float] | None = None  # (x, y)
+        self.variables: dict[str, str] = {}
+        self.last_match_result: tuple[float, float] | None = None
         self.log_callback: Optional[Callable] = None
         self._stop_requested = False
         self._current_action_idx = 0
+        self._serial: str | None = None  # ADB device serial
+
+    async def _init_serial(self):
+        """Discover and cache the ADB device serial."""
+        if self._serial:
+            return
+        out = await _run_adb("devices")
+        if out:
+            lines = out.strip().split("\n")
+            for line in lines[1:]:
+                if "\tdevice" in line:
+                    self._serial = line.split("\t")[0]
+                    break
+
+    def _adb_args(self, *args) -> tuple:
+        """Build ADB args with serial if known."""
+        if self._serial:
+            return ("-s", self._serial) + args
+        return args
 
     def stop(self):
         """Request execution to stop after current action."""
@@ -50,15 +150,15 @@ class ScriptExecutor:
             result = result.replace(f"${{{name}}}", str(val))
         return result
 
-    # ---- Android input mock/real ----
+    # ---- Android input (real via ADB, or mock) ----
 
     async def _tap(self, x: float, y: float):
         if self.mock_mode:
             self._log("info", f"  [mock] tap({x:.0f}, {y:.0f})")
             await asyncio.sleep(0.1)
         else:
-            self._log("info", f"  tap({x:.0f}, {y:.0f})")
-            # TODO: real — adb shell input tap x y
+            self._log("info", f"  👆 tap({x:.0f}, {y:.0f})")
+            await _run_adb(*self._adb_args("shell", "input", "tap", str(int(x)), str(int(y))))
             await asyncio.sleep(0.05)
 
     async def _swipe(self, x1, y1, x2, y2, duration_ms):
@@ -66,8 +166,9 @@ class ScriptExecutor:
             self._log("info", f"  [mock] swipe({x1:.0f},{y1:.0f} → {x2:.0f},{y2:.0f}) {duration_ms}ms")
             await asyncio.sleep(duration_ms / 1000 * 0.1)
         else:
-            self._log("info", f"  swipe({x1:.0f},{y1:.0f} → {x2:.0f},{y2:.0f}) {duration_ms}ms")
-            # TODO: real — adb shell input swipe x1 y1 x2 y2 duration
+            self._log("info", f"  👆 swipe({x1:.0f},{y1:.0f} → {x2:.0f},{y2:.0f}) {duration_ms}ms")
+            await _run_adb(*self._adb_args("shell", "input", "swipe",
+                str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(int(duration_ms))))
             await asyncio.sleep(duration_ms / 1000)
 
     async def _long_press(self, x, y, duration_ms):
@@ -75,47 +176,58 @@ class ScriptExecutor:
             self._log("info", f"  [mock] long_press({x:.0f}, {y:.0f}) {duration_ms}ms")
             await asyncio.sleep(duration_ms / 1000 * 0.1)
         else:
-            self._log("info", f"  long_press({x:.0f}, {y:.0f}) {duration_ms}ms")
-            # TODO: real — adb shell input swipe x y x y duration
+            self._log("info", f"  👆 long_press({x:.0f}, {y:.0f}) {duration_ms}ms")
+            # Swipe from point to same point = long press
+            await _run_adb(*self._adb_args("shell", "input", "swipe",
+                str(int(x)), str(int(y)), str(int(x)), str(int(y)), str(int(duration_ms))))
             await asyncio.sleep(duration_ms / 1000)
 
     async def _push_key(self, key_code: str):
+        # Resolve keycode to canonical form
+        if key_code.startswith("KEYCODE_"):
+            resolved = key_code
+        else:
+            resolved = KEY_NAME_MAP.get(key_code.upper(), f"KEYCODE_{key_code.upper()}")
         if self.mock_mode:
-            self._log("info", f"  [mock] keyevent {key_code}")
+            self._log("info", f"  [mock] keyevent {resolved}")
             await asyncio.sleep(0.05)
         else:
-            self._log("info", f"  keyevent {key_code}")
-            # TODO: real — adb shell input keyevent KEYCODE_{key_code}
+            self._log("info", f"  ⌨️  keyevent {resolved}")
+            await _run_adb(*self._adb_args("shell", "input", "keyevent", resolved))
             await asyncio.sleep(0.05)
 
     async def _combo_action(self, action: str):
+        # Lookup combo keys
+        keys = COMBO_KEYS.get(action, [f"KEYCODE_{action.upper()}"])
         if self.mock_mode:
-            self._log("info", f"  [mock] combo: {action}")
+            self._log("info", f"  [mock] combo: {action} → {keys}")
             await asyncio.sleep(0.1)
         else:
-            self._log("info", f"  combo: {action}")
-            # TODO: real — key combinations via input keyevent
+            self._log("info", f"  ⌨️  combo: {action} → {keys}")
+            for i, key in enumerate(keys):
+                await _run_adb(*self._adb_args("shell", "input", "keyevent", key))
+                if i < len(keys) - 1:
+                    await asyncio.sleep(0.03)
             await asyncio.sleep(0.05)
 
     async def _screenshot_match(self, template_path: str, threshold: float,
-                                  retry_count: int, retry_delay_ms: int) -> tuple[bool, float, float]:
+                                  retry_count: int, retry_delay_ms: int) -> tuple:
         """Try to find template on screen. Returns (success, x, y)."""
         for attempt in range(retry_count):
             if self._stop_requested:
                 return (False, 0, 0)
             if self.mock_mode:
-                # Mock: 70% chance success on first try, 90% by retry 3
                 success_chance = 0.7 + (attempt * 0.1)
-                success = attempt > 2 or True  # Always succeed in mock after retries
+                success = attempt > 2 or True
                 self._log("info", f"  [mock] match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold} → {'FOUND' if success else 'NOT FOUND'}")
                 if success:
-                    self.last_match_result = (540.0, 1200.0)  # Mock center
+                    self.last_match_result = (540.0, 1200.0)
                     return (True, 540.0, 1200.0)
                 if attempt < retry_count - 1:
                     await asyncio.sleep(retry_delay_ms / 1000)
             else:
-                # TODO: real — OpenCV template matching
-                self._log("info", f"  match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
+                self._log("info", f"  🔍 match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
+                # TODO: real OpenCV template matching via screencap + python-opencv
                 await asyncio.sleep(retry_delay_ms / 1000)
         return (False, 0, 0)
 
@@ -142,24 +254,43 @@ class ScriptExecutor:
         resolved = self._resolve_value(text)
         if self.mock_mode:
             self._log("info", f"  [mock] type text ({len(resolved)} chars, {speed_ms}ms/char)")
-            await asyncio.sleep(len(resolved) * speed_ms / 1000 * 0.05)  # Faster in mock
+            await asyncio.sleep(len(resolved) * speed_ms / 1000 * 0.05)
         else:
-            self._log("info", f"  type text: {len(resolved)} chars @ {speed_ms}ms/char")
-            for ch in resolved:
-                # TODO: real — adb shell input text (quoted) or per-character keyevent
-                await asyncio.sleep(speed_ms / 1000)
+            self._log("info", f"  ⌨️  type text: {len(resolved)} chars @ {speed_ms}ms/char")
+            # ADB input text handles most ASCII characters
+            # For complex/special chars, fall back to per-character keyevent
+            safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?@#$%&*()-_=+[]{}|;:'\"/<>`~")
+            if all(ch in safe_chars for ch in resolved):
+                # Fast path: send whole text
+                await _run_adb(*self._adb_args("shell", "input", "text", resolved))
+                await asyncio.sleep(speed_ms / 1000 * len(resolved))
+            else:
+                for ch in resolved:
+                    if ch == " ":
+                        await _run_adb(*self._adb_args("shell", "input", "keyevent", "KEYCODE_SPACE"))
+                    elif ch == "\n":
+                        await _run_adb(*self._adb_args("shell", "input", "keyevent", "KEYCODE_ENTER"))
+                    elif ch.isascii() and ch.isprintable():
+                        await _run_adb(*self._adb_args("shell", "input", "text", ch))
+                    else:
+                        # Unicode: broadcast via am broadcast
+                        self._log("warn", f"  skipping non-ASCII char: {ch}")
+                    await asyncio.sleep(speed_ms / 1000)
 
     # ---- Main executor ----
 
     async def execute(self, script: dict, log_cb: Callable | None = None) -> dict:
         """
         Execute all actions in a script. Returns summary dict.
-        `script` must contain keys: id, name, repeat_count, delay_between_ms, and nested `actions` list.
         """
         self.log_callback = log_cb
         self._stop_requested = False
         self.variables = {}
         self.last_match_result = None
+
+        # Initialize serial for real mode
+        if not self.mock_mode:
+            await self._init_serial()
 
         actions = script.get("actions", [])
         repeat = script.get("repeat_count", 1)
@@ -170,7 +301,8 @@ class ScriptExecutor:
         fail_count = 0
         start_time = time.time()
 
-        self._log("info", f"▶️  Script \"{script['name']}\" started")
+        mode_tag = "[MOCK]" if self.mock_mode else "[REAL]"
+        self._log("info", f"▶️  Script \"{script['name']}\" started {mode_tag}")
         self._log("info", f"📋 Total actions: {len(actions)}, Repeat: {repeat}x")
 
         for rep in range(repeat):
@@ -198,7 +330,7 @@ class ScriptExecutor:
                 if wait_before > 0:
                     await asyncio.sleep(wait_before)
 
-                jump_to = None  # Override next index
+                jump_to = None
                 ok = True
                 err_msg = ""
 
@@ -300,7 +432,6 @@ class ScriptExecutor:
 
                 # ---- Jump logic ----
                 if jump_to:
-                    # Find action index by name
                     target_idx = None
                     for i, a in enumerate(actions):
                         if a.get("name") == jump_to:
@@ -319,7 +450,6 @@ class ScriptExecutor:
 
                 idx += 1
 
-                # Delay between actions
                 if idx < len(actions) and delay_between > 0:
                     await asyncio.sleep(delay_between)
 

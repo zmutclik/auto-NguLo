@@ -11,5 +11,5 @@ sleep 1
 
 echo ""
 
-# Start FastAPI server
-./venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir ./ --log-level info
+# Start FastAPI server (no --reload to save memory on low-RAM VMs)
+./venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info

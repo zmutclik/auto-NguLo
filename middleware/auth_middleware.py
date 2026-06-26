@@ -4,7 +4,7 @@ No username needed — just a single password for the entire app.
 """
 import jwt
 from datetime import datetime, timedelta, timezone
-from fastapi import Request, HTTPException, status
+from fastapi import Request
 from fastapi.responses import RedirectResponse
 from config import SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRE_MINUTES
 
@@ -46,29 +46,29 @@ def get_token_from_request(request: Request) -> str | None:
 
 
 async def auth_middleware(request: Request, call_next):
-    """Middleware that protects routes except login and static files."""
-    # Public paths
-    public_prefixes = ("/api/auth/login", "/static", "/favicon.ico")
-    if any(request.url.path.startswith(p) for p in public_prefixes):
+    """Middleware that protects routes except login, logout and static files."""
+    # Public paths — no auth required
+    public_paths = (
+        "/api/auth/login",
+        "/static",
+        "/favicon.ico",
+        "/",
+        "/login",
+    )
+    if any(request.url.path == p or request.url.path.startswith(p + "/") or
+           request.url.path == p.rstrip("/") for p in public_paths):
         return await call_next(request)
 
-    # Allow unauthenticated access to login page and static
-    if request.url.path in ("/", "/login", ""):
-        return await call_next(request)
-
-    # Check API routes
-    if request.url.path.startswith("/api/"):
-        token = get_token_from_request(request)
-        if not token or not verify_token(token):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
+    token = get_token_from_request(request)
+    if not token or not verify_token(token):
+        # API routes → 401 JSON
+        if request.url.path.startswith("/api/"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required"},
             )
-
-    # Check page routes — redirect to login if no token
-    if not request.url.path.startswith("/api/"):
-        token = get_token_from_request(request)
-        if not token or not verify_token(token):
-            return RedirectResponse(url="/", status_code=302)
+        # Page routes → redirect to login
+        return RedirectResponse(url="/", status_code=302)
 
     return await call_next(request)
