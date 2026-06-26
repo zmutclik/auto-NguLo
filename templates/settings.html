@@ -51,17 +51,47 @@
     </form>
 </div>
 
-<div class="bg-surface-card border border-surface-border rounded-2xl p-6 mb-6 shadow-md">
+<!-- Device Info -->
+<div class="bg-surface-card border border-surface-border rounded-2xl p-6 mb-6 shadow-md"
+     x-data="deviceInfo()" x-init="fetchDeviceInfo()">
     <h2 class="font-semibold flex items-center gap-2 mb-6"><span class="w-8 h-8 rounded-lg bg-brand/10 flex items-center justify-center text-brand">📱</span> Device Info</h2>
     <div class="grid sm:grid-cols-2 gap-4">
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Device</p><p class="font-medium text-slate-200">Samsung Galaxy S23</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Resolution</p><p class="font-medium text-slate-200 font-mono">1080 × 2340</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">ADB Status</p><p class="font-medium text-success flex items-center gap-1.5"><span class="w-2 h-2 bg-success rounded-full"></span> Connected</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Server URL</p><p class="font-medium text-slate-200 font-mono text-sm">http://192.168.1.10:8000</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">Android Version</p><p class="font-medium text-slate-200">14 (API 34)</p></div>
-        <div class="bg-slate-800/50 rounded-xl p-4"><p class="text-xs text-slate-500 mb-1">uiautomator2</p><p class="font-medium text-slate-200">v3.2.0</p></div>
+        <div class="bg-slate-800/50 rounded-xl p-4">
+            <p class="text-xs text-slate-500 mb-1">Device</p>
+            <p class="font-medium text-slate-200" x-text="info.device"></p>
+        </div>
+        <div class="bg-slate-800/50 rounded-xl p-4">
+            <p class="text-xs text-slate-500 mb-1">Resolution</p>
+            <p class="font-medium text-slate-200 font-mono" x-text="info.resolution"></p>
+        </div>
+        <div class="bg-slate-800/50 rounded-xl p-4">
+            <p class="text-xs text-slate-500 mb-1">ADB Status</p>
+            <p class="font-medium flex items-center gap-1.5"
+               :class="info.adb_status === 'connected' ? 'text-success' : 'text-danger'">
+                <span class="w-2 h-2 rounded-full"
+                      :class="info.adb_status === 'connected' ? 'bg-success' : 'bg-danger'"></span>
+                <span x-text="info.adb_status === 'connected' ? 'Connected' : 'Disconnected'"></span>
+            </p>
+        </div>
+        <div class="bg-slate-800/50 rounded-xl p-4">
+            <p class="text-xs text-slate-500 mb-1">Server URL</p>
+            <p class="font-medium text-slate-200 font-mono text-sm" x-text="info.server_url"></p>
+        </div>
+        <div class="bg-slate-800/50 rounded-xl p-4">
+            <p class="text-xs text-slate-500 mb-1">Android Version</p>
+            <p class="font-medium text-slate-200" x-text="info.android_version"></p>
+        </div>
+        <div class="bg-slate-800/50 rounded-xl p-4">
+            <p class="text-xs text-slate-500 mb-1">uiautomator2</p>
+            <p class="font-medium text-slate-200" x-text="info.uiautomator2_version"></p>
+        </div>
     </div>
-    <button class="mt-4 text-sm text-brand hover:underline inline-flex items-center gap-1">🔄 Refresh Info</button>
+    <button @click="fetchDeviceInfo()"
+            :disabled="loading"
+            class="mt-4 text-sm text-brand hover:underline inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+        <span x-show="!loading">🔄 Refresh Info</span>
+        <span x-show="loading">⏳ Loading...</span>
+    </button>
 </div>
 
 <div class="bg-surface-card border border-red-500/20 rounded-2xl p-6 shadow-md">
@@ -72,5 +102,35 @@
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-800/50 rounded-xl p-4"><div><p class="font-medium text-slate-200 text-sm">Import Scripts</p><p class="text-xs text-slate-500">Upload file JSON</p></div><button onclick="alert('Import via API: POST /api/scripts/import')" class="text-slate-300 hover:bg-slate-700 border border-surface-border rounded-lg px-4 py-2 text-sm font-medium transition-colors shrink-0 self-start sm:self-center">📥 Choose File</button></div>
     </div>
 </div>
+
+<script>
+    function deviceInfo() {
+        return {
+            info: {
+                device: '\u2014',
+                resolution: '\u2014',
+                adb_status: 'disconnected',
+                server_url: '\u2014',
+                android_version: '\u2014',
+                uiautomator2_version: '\u2014',
+            },
+            loading: false,
+
+            async fetchDeviceInfo() {
+                this.loading = true;
+                try {
+                    const res = await fetch('/api/device/info');
+                    if (res.ok) {
+                        this.info = await res.json();
+                    }
+                } catch (e) {
+                    console.error('Device info fetch failed:', e);
+                } finally {
+                    this.loading = false;
+                }
+            }
+        };
+    }
+</script>
 
 {% endblock %}

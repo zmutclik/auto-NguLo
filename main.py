@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from config import HOST, PORT, DEBUG, DATABASE_PATH
 from database.connection import init_db, close_db, get_db
 from middleware.auth_middleware import auth_middleware, get_token_from_request, verify_token
-from routers import auth, scripts, actions, executor
+from routers import auth, scripts, actions, executor, device
 
 # ---- App Lifespan ----
 @asynccontextmanager
@@ -64,6 +64,7 @@ app.include_router(auth.router)
 app.include_router(scripts.router)
 app.include_router(actions.router)
 app.include_router(executor.router)
+app.include_router(device.router)
 
 
 # ===== PAGE ROUTES =====

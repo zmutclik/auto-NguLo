@@ -1,4 +1,4 @@
-# 🤖 Auto-NguLo
+# 🤖 Auto-NguLo — Panduan Instalasi & Pengoperasian
 
 **Android Automation Manager** — Aplikasi web untuk membuat, mengelola, dan mengeksekusi script otomatisasi perangkat Android. Didesain untuk berjalan di lingkungan **Termux** (Android) dan dapat diakses melalui browser dari perangkat manapun.
 
@@ -11,152 +11,153 @@
 
 ## 📋 Daftar Isi
 
-- [Fitur](#-fitur)
-- [Tech Stack](#-tech-stack)
-- [Struktur Project](#-struktur-project)
+- [Prasyarat](#-prasyarat)
 - [Instalasi](#-instalasi)
-- [Menjalankan Aplikasi](#-menjalankan-aplikasi)
+  - [1. Clone Project](#1-clone-project)
+  - [2. Virtual Environment](#2-virtual-environment)
+  - [3. Install Dependencies](#3-install-dependencies)
 - [Konfigurasi](#-konfigurasi)
-- [API Endpoints](#-api-endpoints)
+  - [Environment Variables](#environment-variables)
+  - [File `.env`](#file-env)
+- [Menjalankan Aplikasi](#-menjalankan-aplikasi)
+  - [Cara 1: `start.sh` (recommended)](#cara-1-startsh-recommended)
+  - [Cara 2: Manual](#cara-2-manual)
+  - [Cara 3: Background Service (Termux:Boot)](#cara-3-background-service-termuxboot)
+- [Akses Aplikasi](#-akses-aplikasi)
+- [Login & Keamanan](#-login--keamanan)
+- [Pengoperasian](#-pengoperasian)
+  - [Dashboard — Kelola Script](#dashboard--kelola-script)
+  - [Script Editor — Buat/Edit Script](#script-editor--buatedit-script)
+  - [Menjalankan Script](#menjalankan-script)
+  - [Live Log & Monitoring](#live-log--monitoring)
+  - [History Eksekusi](#history-eksekusi)
+  - [Settings — Ubah Password](#settings--ubah-password)
 - [Jenis Action](#-jenis-action)
-- [Halaman Web](#-halaman-web)
-- [Keamanan](#-keamanan)
+- [API Endpoints (Ringkasan)](#-api-endpoints-ringkasan)
+- [Troubleshooting](#-troubleshooting)
+- [Struktur Project](#-struktur-project)
 - [Pengembangan](#-pengembangan)
-- [Roadmap](#-roadmap)
+- [Lisensi](#-lisensi)
 
 ---
 
-## ✨ Fitur
+## 📦 Prasyarat
 
-| Fitur | Deskripsi |
-|-------|-----------|
-| 🔐 **Auth Sederhana** | Login hanya dengan password (tanpa username), JWT token 24 jam |
-| 📝 **Script Editor** | Buat dan edit script otomatisasi dengan UI interaktif |
-| ⚡ **10 Jenis Action** | Tap, swipe, long press, screenshot match, type text, key event, combo, API call, variable, wait |
-| 🔄 **Repeat Loop** | Jalankan script berulang kali dengan jeda antar pengulangan |
-| 🎯 **Jump Logic** | Lompat ke action tertentu berdasarkan sukses/gagal |
-| 📸 **Screenshot Matching** | Deteksi elemen UI via template image dengan retry |
-| 🌐 **API Integration** | Panggil HTTP API dan simpan respon ke variabel |
-| 📊 **Live Log SSE** | Streaming log eksekusi real-time via Server-Sent Events |
-| 📜 **Execution History** | Riwayat semua eksekusi script dengan statistik |
-| 🎨 **Dark UI Modern** | Interface Tailwind CSS + Alpine.js, dark theme |
-| 📱 **Termux Ready** | Didesain untuk berjalan di Android via Termux |
-| 🧪 **Mock Mode** | Simulasi eksekusi tanpa device Android (untuk development) |
+| Kebutuhan | Versi / Keterangan |
+|-----------|---------------------|
+| **Python** | 3.10 atau lebih baru |
+| **pip** | Sudah termasuk dalam Python |
+| **venv** | Sudah termasuk dalam Python |
+| **Termux** | Jika berjalan di Android (dari F-Droid, bukan Play Store) |
+| **OS alternatif** | Linux, macOS, atau WSL |
+| **Browser** | Chrome, Firefox, atau browser modern lainnya |
 
----
+### Instalasi Termux (Android)
 
-## 🛠 Tech Stack
+> ⚠️ Gunakan Termux dari **F-Droid**, bukan Google Play Store (versi Play Store sudah usang).
 
-| Layer | Teknologi |
-|-------|-----------|
-| **Backend** | Python 3.10+, FastAPI |
-| **Server** | Uvicorn (ASGI) |
-| **Database** | SQLite (aiosqlite — async) |
-| **Auth** | PyJWT (HS256) |
-| **Template** | Jinja2 |
-| **Frontend** | Tailwind CSS, Alpine.js (CDN) |
-| **HTTP Client** | httpx (async) |
-| **Validasi** | Pydantic v2 |
-
----
-
-## 📁 Struktur Project
-
-```
-auto-NguLo/
-├── main.py                    # Entry point FastAPI app + page routes
-├── config.py                  # Konfigurasi (env vars)
-├── requirements.txt           # Dependencies Python
-├── start.sh                   # Script untuk menjalankan server
-│
-├── database/
-│   ├── __init__.py
-│   └── connection.py          # Async SQLite connection + schema init
-│
-├── engine/
-│   ├── __init__.py
-│   └── executor.py            # ScriptExecutor — menjalankan action script
-│
-├── middleware/
-│   ├── __init__.py
-│   └── auth_middleware.py      # JWT auth middleware + helper functions
-│
-├── routers/
-│   ├── __init__.py
-│   ├── auth.py                # POST /api/auth/login, PUT /api/auth/password
-│   ├── scripts.py             # CRUD /api/scripts
-│   ├── actions.py             # CRUD /api/scripts/{id}/actions
-│   └── executor.py            # POST /execute, GET /stream (SSE)
-│
-├── schemas/
-│   ├── __init__.py
-│   └── requests.py            # Pydantic models (request/response)
-│
-├── templates/                 # Jinja2 HTML templates
-│   ├── base.html              # Layout utama (navbar, styling)
-│   ├── login.html             # Halaman login
-│   ├── dashboard.html         # Daftar script
-│   ├── script_editor.html     # Editor script + actions
-│   ├── execution.html         # Live log eksekusi
-│   ├── history.html           # Riwayat eksekusi
-│   └── settings.html          # Ubah password
-│
-├── data/                      # Runtime data (auto-created)
-│   ├── angulo.db              # SQLite database
-│   ├── templates/             # Screenshot templates (static mount)
-│   ├── screenshots/           # Screenshot hasil capture
-│   └── logs/                  # File log
-│
-└── wireframes/                # Wireframe HTML (desain awal)
-    ├── dashboard.html
-    ├── execution.html
-    ├── history.html
-    ├── login.html
-    ├── script-editor.html
-    └── settings.html
-```
+1. Download dan install [F-Droid](https://f-droid.org/)
+2. Buka F-Droid, cari "Termux", lalu install
+3. Buka Termux dan jalankan:
+   ```bash
+   pkg update && pkg upgrade
+   pkg install python git
+   ```
 
 ---
 
 ## 🚀 Instalasi
 
-### Prasyarat
-
-- **Python 3.10+**
-- **Termux** (jika di Android) atau Linux/macOS
-- `pip` dan `venv`
-
-### Langkah Instalasi
+### 1. Clone Project
 
 ```bash
-# 1. Clone repository
 git clone <repo-url>
 cd auto-NguLo
+```
 
-# 2. Buat virtual environment
+> Jika tidak menggunakan git, cukup ekstrak folder project ke direktori manapun.
+
+### 2. Virtual Environment
+
+```bash
 python -m venv venv
+source venv/bin/activate      # Linux / macOS / Termux
+```
 
-# 3. Aktifkan virtual environment
-source venv/bin/activate      # Linux/macOS/Termux
+> Untuk Windows (cmd/PowerShell): `venv\Scripts\activate`
 
-# 4. Install dependencies
+### 3. Install Dependencies
+
+```bash
 pip install -r requirements.txt
+```
+
+**Isi `requirements.txt`:**
+```
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+aiosqlite>=0.20.0
+PyJWT>=2.8.0
+httpx>=0.27.0
+pydantic>=2.0.0
+jinja2>=3.1.0
+python-multipart>=0.0.9
+aiofiles>=24.0.0
+```
+
+> Jika ada kendala instalasi `uvicorn` di Termux, jalankan:
+> ```bash
+> pkg install binutils build-essential python
+> pip install --no-cache-dir uvicorn
+> ```
+
+---
+
+## ⚙️ Konfigurasi
+
+### Environment Variables
+
+Semua konfigurasi menggunakan **environment variable**. Dapat diatur via file `.env` atau langsung di terminal.
+
+| Variable | Default | Deskripsi |
+|----------|---------|-----------|
+| `ANGULO_HOST` | `0.0.0.0` | Host binding server (gunakan `0.0.0.0` agar bisa diakses dari LAN) |
+| `ANGULO_PORT` | `8000` | Port server |
+| `ANGULO_DEBUG` | `false` | Mode debug (log lebih detail) |
+| `ANGULO_DB` | `data/angulo.db` | Path file database SQLite |
+| `ANGULO_SECRET_KEY` | *(auto-generated)* | Secret key untuk JWT token |
+| `ANGULO_JWT_EXPIRE` | `1440` | Masa berlaku token (menit), default 24 jam |
+| `ANGULO_SCREENSHOT_DIR` | `data/screenshots` | Direktori penyimpanan screenshot |
+| `ANGULO_TEMPLATE_DIR` | `data/templates` | Direktori template gambar untuk screenshot matching |
+| `ANGULO_LOG_DIR` | `data/logs` | Direktori file log |
+| `ANGULO_CORS` | `*` | CORS origins (pisahkan dengan koma untuk multi origin) |
+
+### File `.env`
+
+Buat file `.env` di root project:
+
+```env
+ANGULO_PORT=9000
+ANGULO_SECRET_KEY=my-super-secret-key-2026
+ANGULO_JWT_EXPIRE=60
+ANGULO_DEBUG=true
 ```
 
 ---
 
 ## ▶️ Menjalankan Aplikasi
 
-### Cara 1: Menggunakan `start.sh`
+### Cara 1: `start.sh` (recommended)
 
 ```bash
 chmod +x start.sh
 ./start.sh
 ```
 
-Script ini akan:
-- Membunuh proses server yang sedang berjalan di port 8000
-- Menjalankan Uvicorn dengan hot-reload (auto-restart saat file berubah)
+Script ini otomatis:
+- Membunuh proses server yang sedang berjalan di port yang dikonfigurasi
+- Mengaktifkan virtual environment
+- Menjalankan Uvicorn dengan **hot-reload** (auto-restart saat file berubah)
 
 ### Cara 2: Manual
 
@@ -165,13 +166,72 @@ source venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Akses Aplikasi
+| Flag | Keterangan |
+|------|------------|
+| `--host 0.0.0.0` | Mendengarkan di semua interface (wajib untuk akses LAN) |
+| `--port 8000` | Port server |
+| `--reload` | Auto-restart saat kode berubah (nonaktifkan di production) |
+
+### Cara 3: Background Service (Termux:Boot)
+
+Jalankan server sebagai background service agar otomatis menyala saat Termux boot:
+
+```bash
+# Install Termux:Boot dari F-Droid
+# Buat script di ~/.termux/boot/
+mkdir -p ~/.termux/boot
+```
+
+`~/.termux/boot/start-angulo`:
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+cd /path/to/auto-NguLo
+source venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port 8000 &
+```
+
+```bash
+chmod +x ~/.termux/boot/start-angulo
+```
+
+---
+
+## 🌐 Akses Aplikasi
 
 Buka browser dan akses:
-- **Dari device yang sama:** `http://localhost:8000`
-- **Dari device lain (LAN):** `http://<IP-Termux>:8000`
 
-> 💡 Cek IP Termux: `ifconfig wlan0` atau `ip addr show wlan0`
+| Dari | URL |
+|------|-----|
+| **Device yang sama** | `http://localhost:8000` |
+| **Device lain (LAN)** | `http://<IP-Device>:8000` |
+
+### Cara Mengecek IP
+
+```bash
+# Di Termux / Linux
+ifconfig wlan0        # atau
+ip addr show wlan0    # atau
+hostname -I
+```
+
+> 💡 Contoh: jika IP Termux adalah `192.168.1.10`, buka `http://192.168.1.10:8000` dari laptop atau HP lain.
+
+### Testing API dari Terminal
+
+```bash
+# Login & ambil token
+curl -s -X POST http://localhost:8000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"password":"123456"}'
+
+# Cek status auth
+curl http://localhost:8000/api/auth/check \
+  -H 'Cookie: angulo_token=<TOKEN>'
+```
+
+---
+
+## 🔐 Login & Keamanan
 
 ### Default Password
 
@@ -179,93 +239,90 @@ Buka browser dan akses:
 123456
 ```
 
-> ⚠️ **Ganti password default** melalui halaman Settings setelah login pertama!
+> ⚠️ **WAJIB ganti password default** setelah login pertama! Buka halaman **Settings** untuk mengubahnya.
+
+### Fitur Keamanan
+
+- **JWT Token** disimpan di HTTP-only cookie (`ngulo_token`), tidak bisa diakses JavaScript → terlindungi dari XSS
+- **Session 24 jam** — token expired otomatis setelah 1440 menit (bisa dikonfigurasi via `ANGULO_JWT_EXPIRE`)
+- **Middleware auth** otomatis memeriksa semua route kecuali `/api/auth/login` dan static files
+- **CORS** dapat dibatasi via `ANGULO_CORS`
 
 ---
 
-## ⚙️ Konfigurasi
+## 🎮 Pengoperasian
 
-Semua konfigurasi menggunakan **environment variable**. Dapat diatur via `.env` file atau langsung di terminal.
+### Dashboard — Kelola Script
 
-| Variable | Default | Deskripsi |
-|----------|---------|-----------|
-| `ANGULO_HOST` | `0.0.0.0` | Host binding server |
-| `ANGULO_PORT` | `8000` | Port server |
-| `ANGULO_DEBUG` | `false` | Mode debug |
-| `ANGULO_DB` | `data/angulo.db` | Path database SQLite |
-| `ANGULO_SECRET_KEY` | `auto-ngulo-secret-key-...` | Secret key JWT |
-| `ANGULO_JWT_EXPIRE` | `1440` | Expire token (menit, default 24 jam) |
-| `ANGULO_SCREENSHOT_DIR` | `data/screenshots` | Direktori screenshot |
-| `ANGULO_TEMPLATE_DIR` | `data/templates` | Direktori template image |
-| `ANGULO_LOG_DIR` | `data/logs` | Direktori log |
-| `ANGULO_CORS` | `*` | CORS origins (comma-separated) |
+Buka `/dashboard` setelah login.
 
-Contoh `.env`:
+| Aksi | Cara |
+|------|------|
+| **Buat script baru** | Klik tombol **"+ New Script"**, isi nama, deskripsi, repeat count & delay |
+| **Edit script** | Klik nama script → masuk ke Script Editor |
+| **Jalankan script** | Klik tombol ▶️ **Run** pada script |
+| **Hapus script** | Klik tombol 🗑️ **Delete** pada script |
 
-```env
-ANGULO_PORT=9000
-ANGULO_SECRET_KEY=my-super-secret-key-2026
-ANGULO_JWT_EXPIRE=60
-```
+### Script Editor — Buat/Edit Script
 
----
+Buka `/scripts/new` atau klik script dari Dashboard.
 
-## 🔌 API Endpoints
+**Struktur Script:**
+- **Nama & Deskripsi** — identitas script
+- **Repeat** — berapa kali script diulang (1 = sekali jalan)
+- **Repeat Delay (ms)** — jeda antar pengulangan dalam milidetik
+- **Actions** — urutan langkah yang akan dieksekusi
 
-### 🔐 Authentication
+**Menambah Action:**
+1. Klik **"+ Add Action"**
+2. Pilih tipe action (tap, swipe, type_text, dll.)
+3. Isi parameter sesuai tipe action
+4. Klik **Save Action**
+5. Ulangi untuk action berikutnya
 
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `POST` | `/api/auth/login` | Login dengan password |
-| `PUT` | `/api/auth/password` | Ganti password |
-| `GET` | `/api/auth/check` | Cek status autentikasi |
+**Mengatur Urutan:**
+- Klik ikon ⬆️⬇️ untuk memindahkan action naik/turun
+- Urutan action menentukan urutan eksekusi
 
-**Login Request:**
-```json
-{ "password": "123456" }
-```
+### Menjalankan Script
 
-**Login Response:**
-```json
-{ "token": "eyJ...", "message": "Login successful" }
-```
+1. Dari **Dashboard**, klik ▶️ **Run** pada script yang ingin dijalankan
+2. Anda akan dialihkan ke halaman **Execution** dengan live log
+3. Script akan mengeksekusi actions satu per satu secara berurutan
+4. Untuk **menghentikan** eksekusi yang sedang berjalan, klik tombol ⏹️ **Stop**
 
-### 📝 Scripts CRUD
+### Live Log & Monitoring
 
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `GET` | `/api/scripts` | List semua script (+ action count) |
-| `POST` | `/api/scripts` | Buat script baru |
-| `GET` | `/api/scripts/{id}` | Detail script + actions |
-| `PUT` | `/api/scripts/{id}` | Update script |
-| `DELETE` | `/api/scripts/{id}` | Hapus script (cascade actions) |
+Halaman `/execute/{id}` menampilkan:
 
-### ⚡ Actions CRUD
+- **Status** — RUNNING / COMPLETED / FAILED / STOPPED
+- **Progress** — action keberapa yang sedang dieksekusi
+- **Live Log** — streaming real-time via SSE, setiap langkah tercatat:
+  - Waktu eksekusi
+  - Action yang dijalankan
+  - Hasil (SUCCESS / FAIL)
+  - Error message (jika gagal)
+- **Statistik akhir** — total action sukses, gagal, durasi total
 
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `GET` | `/api/scripts/{id}/actions` | List actions dalam script |
-| `POST` | `/api/scripts/{id}/actions` | Tambah action |
-| `GET` | `/api/scripts/{id}/actions/{aid}` | Detail action |
-| `PUT` | `/api/scripts/{id}/actions/{aid}` | Update action |
-| `DELETE` | `/api/scripts/{id}/actions/{aid}` | Hapus action |
-| `PUT` | `/api/scripts/{id}/actions/reorder` | Reorder actions |
+### History Eksekusi
 
-### 🚀 Execution
+Buka `/history` untuk melihat riwayat semua eksekusi:
 
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `POST` | `/api/scripts/{id}/execute` | Jalankan script |
-| `GET` | `/api/scripts/{id}/stream/{log_id}` | Stream log via SSE |
-| `POST` | `/api/scripts/{id}/stop` | Hentikan eksekusi |
+- Daftar eksekusi terakhir (100 entries)
+- Status tiap eksekusi (completed / failed / stopped)
+- Statistik: jumlah action sukses vs gagal
+- Durasi eksekusi
+- Bisa **dihapus** satu per satu atau semua
 
-### 📜 History
+### Settings — Ubah Password
 
-| Method | Endpoint | Deskripsi |
-|--------|----------|-----------|
-| `GET` | `/api/history` | Semua execution history (100 terakhir) |
-| `DELETE` | `/api/history` | Hapus semua history |
-| `DELETE` | `/api/history/{log_id}` | Hapus satu entry |
+Buka `/settings`:
+1. Masukkan password saat ini
+2. Masukkan password baru
+3. Masukkan konfirmasi password baru
+4. Klik **Save**
+
+> Jika lupa password, hapus file `data/angulo.db` lalu restart server — password akan reset ke `123456`.
 
 ---
 
@@ -281,7 +338,7 @@ Tap layar di titik (x, y).
 ```
 
 ### 2. `swipe` — Geser layar
-Swipe dari (x, y) ke (x2, y2) dengan durasi.
+Swipe dari (x1, y1) ke (x2, y2) dengan durasi.
 ```
 ⚡ swipe [Scroll ke Bawah]
    📍 540,1500 → 540,400 (500ms)
@@ -295,7 +352,7 @@ Tap dan tahan di koordinat selama durasi tertentu.
 ```
 
 ### 4. `screenshot_match` — Deteksi gambar
-Cocokkan template image dengan screenshot layar. Mendukung retry dan jump logic.
+Cocokkan template image dengan screenshot layar. Mendukung retry dan jump.
 ```
 ⚡ screenshot_match [Cari Tombol Login]
    🖼 template: login_btn.png | 🎯 threshold: 0.80
@@ -332,13 +389,10 @@ Panggil API eksternal, simpan respon ke variabel.
 ```
 
 ### 9. `variable` — Operasi variabel
-Set, update, atau get variabel runtime. Variabel bisa direferensi dengan `${nama_var}`.
+Set, update, atau get variabel runtime. Referensi dengan `${nama_var}`.
 ```
 ⚡ variable [Set Token]
    📝 ${auth_token} = "bearer-xxx"
-
-⚡ variable [Get Token]
-   📝 Get ${auth_token}
 ```
 
 ### 10. `type_text` — Ketik teks
@@ -361,28 +415,107 @@ Simulasikan pengetikan karakter per karakter.
 
 ---
 
-## 🌐 Halaman Web
+## 🔌 API Endpoints (Ringkasan)
 
-| Halaman | Route | Deskripsi |
-|---------|-------|-----------|
-| **Login** | `/` | Halaman login dengan password |
-| **Dashboard** | `/dashboard` | Daftar semua script, buat/hapus script |
-| **Script Editor** | `/scripts/new` | Buat script baru + atur urutan actions |
-| **Edit Script** | `/scripts/{id}/edit` | Edit script yang sudah ada |
-| **Execution** | `/execute/{id}` | Live log SSE saat eksekusi berjalan |
-| **History** | `/history` | Riwayat semua eksekusi dengan statistik |
-| **Settings** | `/settings` | Ubah password aplikasi |
-| **Logout** | `/logout` | Hapus cookie & redirect ke login |
+### Authentication
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `POST` | `/api/auth/login` | Login dengan password, dapatkan token |
+| `PUT` | `/api/auth/password` | Ubah password |
+| `GET` | `/api/auth/check` | Cek status login |
+
+### Scripts
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `GET` | `/api/scripts` | List semua script |
+| `POST` | `/api/scripts` | Buat script baru |
+| `GET` | `/api/scripts/{id}` | Detail script + actions |
+| `PUT` | `/api/scripts/{id}` | Update metadata script |
+| `DELETE` | `/api/scripts/{id}` | Hapus script (cascade) |
+
+### Actions
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `GET` | `/api/scripts/{id}/actions` | List actions |
+| `POST` | `/api/scripts/{id}/actions` | Tambah action |
+| `PUT` | `/api/scripts/{id}/actions/{aid}` | Update action |
+| `DELETE` | `/api/scripts/{id}/actions/{aid}` | Hapus action |
+
+### Execution
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `POST` | `/api/scripts/{id}/execute` | Jalankan script |
+| `GET` | `/api/scripts/{id}/stream/{log_id}` | SSE live log |
+| `POST` | `/api/scripts/{id}/stop` | Hentikan eksekusi |
+
+### History
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `GET` | `/api/history` | Riwayat eksekusi |
+| `DELETE` | `/api/history` | Hapus semua history |
+| `DELETE` | `/api/history/{log_id}` | Hapus satu entry |
 
 ---
 
-## 🔒 Keamanan
+## 🔧 Troubleshooting
 
-- **JWT Token** disimpan di HTTP-only cookie (`ngulo_token`), tidak bisa diakses JavaScript
-- **Password** disimpan di database SQLite (plaintext — akan diupgrade ke bcrypt di versi berikutnya)
-- **Middleware auth** otomatis memeriksa semua route kecuali `/api/auth/login` dan static files
-- **CORS** dapat dikonfigurasi via `ANGULO_CORS` untuk membatasi origin
-- **Session 24 jam** — token expired setelah 1440 menit (dapat diubah)
+| Masalah | Solusi |
+|---------|--------|
+| **Port sudah dipakai** | `pkill -f uvicorn` lalu jalankan ulang, atau ganti `ANGULO_PORT` |
+| **Tidak bisa akses dari LAN** | Pastikan `ANGULO_HOST=0.0.0.0` dan firewall tidak memblokir port |
+| **Database corrupt** | Hapus `data/angulo.db`, restart server (database baru akan dibuat otomatis) |
+| **Lupa password** | Hapus `data/angulo.db` — password reset ke `123456` |
+| **Token expired** | Login ulang; atau perpanjang `ANGULO_JWT_EXPIRE` |
+| **Gagal install di Termux** | `pkg install binutils build-essential python` lalu `pip install --no-cache-dir -r requirements.txt` |
+| **Halaman tidak muncul** | Cek konsol Uvicorn untuk error; pastikan semua file templates ada |
+| **Script tidak berjalan** | Cek mode: saat ini **mock mode** — koordinat tap/swipe tidak benar-benar menyentuh layar |
+
+---
+
+## 📁 Struktur Project
+
+```
+auto-NguLo/
+├── main.py                    # Entry point FastAPI + page routes
+├── config.py                  # Konfigurasi (env vars)
+├── requirements.txt           # Dependencies Python
+├── start.sh                   # Script cepat untuk menjalankan server
+│
+├── database/
+│   └── connection.py          # Koneksi async SQLite + schema
+│
+├── engine/
+│   └── executor.py            # ScriptExecutor — eksekusi action
+│
+├── middleware/
+│   └── auth_middleware.py      # JWT auth middleware
+│
+├── routers/
+│   ├── auth.py                # Endpoint login & password
+│   ├── scripts.py             # CRUD scripts
+│   ├── actions.py             # CRUD actions
+│   └── executor.py            # Eksekusi & SSE streaming
+│
+├── schemas/
+│   └── requests.py            # Pydantic models
+│
+├── templates/                 # Jinja2 HTML (UI web)
+│   ├── base.html              # Layout utama
+│   ├── login.html             # Halaman login
+│   ├── dashboard.html         # Daftar script
+│   ├── script_editor.html     # Editor script
+│   ├── execution.html         # Live log
+│   ├── history.html           # Riwayat
+│   └── settings.html          # Ubah password
+│
+├── data/                      # Runtime data (auto-created)
+│   ├── angulo.db              # SQLite database
+│   ├── templates/             # Screenshot templates
+│   ├── screenshots/           # Hasil screenshot
+│   └── logs/                  # File log
+│
+└── wireframes/                # Wireframe desain awal
+```
 
 ---
 
@@ -390,44 +523,24 @@ Simulasikan pengetikan karakter per karakter.
 
 ### Mode Mock vs Real
 
-Saat ini executor berjalan dalam **mock mode** (`mock_mode=True` di `routers/executor.py`). Dalam mode ini:
-- Semua action Android disimulasikan (tidak butuh device/ADB)
+Saat ini executor berjalan dalam **mock mode** (`mock_mode=True` di `routers/executor.py`):
+- Semua action Android **disimulasikan** — cocok untuk testing UI
 - Screenshot matching selalu sukses dengan koordinat mock
-- Cocok untuk development dan testing UI
+- Tidak membutuhkan device Android atau ADB
 
-Untuk mode real (produksi), perlu implementasi:
+Untuk mode **real** (produksi), perlu implementasi:
 - ADB shell commands (`adb shell input tap/swipe/keyevent`)
 - OpenCV untuk template matching (`cv2.matchTemplate`)
-- UiAutomator2 untuk kontrol device
-
-### Menambah Jenis Action Baru
-
-1. Tambahkan validasi di `schemas/requests.py` → `action_type` pattern
-2. Tambahkan handler di `engine/executor.py` → method `execute()`
-3. Tambahkan UI di `templates/script_editor.html`
+- UiAutomator2 untuk kontrol device Android
 
 ### Database Schema
 
-Database SQLite terdiri dari 4 tabel:
-- **`config`** — key-value store (password, settings)
-- **`scripts`** — metadata script (nama, repeat, delay)
-- **`actions`** — langkah-langkah script (tipe, koordinat, parameter)
-- **`execution_logs`** — log hasil eksekusi (status, statistik, log JSON)
-
----
-
-## 🗺 Roadmap
-
-- [ ] Bcrypt hashing untuk password
-- [ ] ADB integration (real device control)
-- [ ] OpenCV template matching (real screenshot match)
-- [ ] Upload screenshot template via UI
-- [ ] Drag-and-drop reorder actions
-- [ ] Export/import script (JSON)
-- [ ] Multi-user support
-- [ ] WebSocket untuk live log (ganti SSE)
-- [ ] Docker support
-- [ ] Background service (Termux: Boot)
+| Tabel | Isi |
+|-------|-----|
+| `config` | Key-value store (password, settings) |
+| `scripts` | Metadata script (nama, repeat, delay) |
+| `actions` | Langkah script (tipe, koordinat, parameter) |
+| `execution_logs` | Log hasil eksekusi (status, statistik, log JSON) |
 
 ---
 
