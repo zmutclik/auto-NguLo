@@ -1031,14 +1031,16 @@ class ScriptExecutor:
                     if action_type == "tap":
                         if action.get("use_match_result") and self.last_match_result:
                             await self._tap(*self.last_match_result)
-                        elif action.get("template_path"):
+                        elif action.get("template_path") and action.get("x") is None and action.get("y") is None:
+                            # No explicit coords → auto-detect via template matching
                             coords = await self._resolve_coords_from_template(action)
                             await self._tap(coords[0], coords[1])
                         else:
                             await self._tap(action.get("x", 0), action.get("y", 0))
 
                     elif action_type == "swipe":
-                        if action.get("template_path"):
+                        if action.get("template_path") and action.get("x") is None and action.get("y") is None:
+                            # No explicit coords → auto-detect via template matching
                             coords = await self._resolve_coords_from_template(action)
                             await self._swipe(
                                 coords[0], coords[1], coords[2], coords[3],
@@ -1052,7 +1054,8 @@ class ScriptExecutor:
                             )
 
                     elif action_type == "long_press":
-                        if action.get("template_path"):
+                        if action.get("template_path") and action.get("x") is None and action.get("y") is None:
+                            # No explicit coords → auto-detect via template matching
                             coords = await self._resolve_coords_from_template(action)
                             await self._long_press(coords[0], coords[1],
                                 action.get("duration_ms", 500),

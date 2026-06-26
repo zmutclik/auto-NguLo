@@ -89,26 +89,45 @@
                         <div x-show="a.action_type === 'tap' || a.action_type === 'long_press'" class="space-y-2 mb-3">
                             <!-- Template Image Picker -->
                             <div>
-                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Template Image <span class="text-slate-600">(auto-detect X,Y)</span></label>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Template Image <span class="text-slate-600">(klik gambar untuk ambil X,Y)</span></label>
                                 <div class="flex items-center gap-2">
-                                    <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih gambar untuk auto-detect koordinat...">
+                                    <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih screenshot untuk referensi koordinat...">
                                     <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
                                 </div>
-                                <p class="text-xs text-slate-600 mt-1">Kosongkan untuk menggunakan koordinat manual di bawah</p>
-                                <!-- Template preview -->
-                                <div x-show="a.template_path" class="mt-2 bg-slate-800 border border-dashed border-slate-600 rounded-lg h-20 flex items-center justify-center text-slate-500 text-sm overflow-hidden">
-                                    <img :src="'/static/' + a.template_path" class="max-h-full max-w-full object-contain" alt="Template preview">
+                                <p class="text-xs text-slate-600 mt-1">Pilih gambar lalu <b>tap/klik</b> pada gambar untuk ambil koordinat X,Y</p>
+                                <!-- Template preview — large & interactive -->
+                                <div x-show="a.template_path" class="mt-2 bg-slate-900 border border-dashed border-slate-600 rounded-xl overflow-hidden relative group cursor-crosshair"
+                                     @mousedown.prevent="startCoordPick(a, 'tap', $event)"
+                                     @touchstart.prevent="startCoordPick(a, 'tap', $event)"
+                                     @mouseup="endCoordPick(a, $event)"
+                                     @touchend="endCoordPick(a, $event)"
+                                     @contextmenu.prevent>
+                                    <img :src="'/static/' + a.template_path" class="w-full h-auto block select-none pointer-events-none" alt="Template preview" draggable="false"
+                                         @load="$el.parentElement._imgLoaded = true">
+                                    <!-- Coordinate crosshair overlay -->
+                                    <div x-show="a._pickX != null" class="absolute pointer-events-none" :style="'left:'+a._pickPctX+'%;top:'+a._pickPctY+'%'">
+                                        <div class="w-6 h-6 -ml-3 -mt-3 rounded-full border-2 border-brand bg-brand/20 shadow-lg shadow-brand/40"></div>
+                                        <div class="absolute top-0 left-0 w-full h-0.5 bg-brand -translate-y-1/2 shadow-sm"></div>
+                                        <div class="absolute top-0 left-0 h-full w-0.5 bg-brand -translate-x-1/2 shadow-sm"></div>
+                                    </div>
+                                    <!-- Floating coordinate label -->
+                                    <div x-show="a._pickX != null" class="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded-lg font-mono pointer-events-none shadow-lg backdrop-blur-sm">
+                                        📍 X:<span x-text="a._pickX" class="text-brand font-bold"></span> Y:<span x-text="a._pickY" class="text-brand font-bold"></span>
+                                    </div>
+                                    <!-- Hint -->
+                                    <div x-show="a._pickX == null" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <span class="text-slate-500 text-sm bg-black/40 px-3 py-1 rounded-lg backdrop-blur-sm">👆 Tap / Klik pada gambar</span>
+                                    </div>
                                 </div>
                             </div>
-                            <!-- Manual Coords & Template Match Config -->
+                            <!-- Coordinates (filled by image interaction) -->
                             <div x-show="a.template_path">
-                                <div class="grid grid-cols-2 gap-3 bg-slate-800/50 rounded-lg p-3 border border-slate-700/30">
-                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Match Threshold (0-1)</label><input x-model.number="a.match_threshold" type="number" min="0" max="1" step="0.05" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
-                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Retry Count</label><input x-model.number="a.retry_count" type="number" min="1" max="99" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
-                                    <div class="col-span-2"><label class="block text-xs font-medium text-slate-500 mb-1">Retry Delay (ms)</label><input x-model.number="a.retry_delay_ms" type="number" min="0" step="100" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div><label class="text-xs text-slate-500">X <span x-show="a._pickX != null" class="text-brand">📌</span></label><input x-model.number="a.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="dari klik gambar"></div>
+                                    <div><label class="text-xs text-slate-500">Y <span x-show="a._pickY != null" class="text-brand">📌</span></label><input x-model.number="a.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="dari klik gambar"></div>
                                 </div>
                             </div>
-                            <!-- Manual Coordinates -->
+                            <!-- Manual Coordinates (no template) -->
                             <div x-show="!a.template_path && !a.use_match_result">
                                 <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">X <span x-show="a.use_match_result" class="text-slate-600">(auto)</span></label><input x-model.number="a.x" :disabled="a.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40"></div><div><label class="text-xs text-slate-500">Y</label><input x-model.number="a.y" :disabled="a.use_match_result" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-40"></div></div>
                             </div>
@@ -122,35 +141,60 @@
                         <div x-show="a.action_type === 'swipe'" class="space-y-2 mb-3">
                             <!-- Template Image for Start Point -->
                             <div>
-                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Template Image (Start) <span class="text-slate-600">(auto-detect from X,Y)</span></label>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Screenshot Referensi <span class="text-slate-600">(swipe pada gambar untuk ambil from→to X,Y)</span></label>
                                 <div class="flex items-center gap-2">
-                                    <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih gambar untuk auto-detect start point...">
+                                    <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih screenshot untuk referensi koordinat swipe...">
                                     <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
                                 </div>
-                                <div x-show="a.template_path" class="mt-2 bg-slate-800 border border-dashed border-slate-600 rounded-lg h-20 flex items-center justify-center text-slate-500 text-sm overflow-hidden">
-                                    <img :src="'/static/' + a.template_path" class="max-h-full max-w-full object-contain" alt="Start template preview">
+                                <p class="text-xs text-slate-600 mt-1">Pilih gambar lalu <b>swipe</b> (drag) pada gambar untuk ambil koordinat <span class="text-success">from</span> → <span class="text-danger">to</span></p>
+                                <!-- Template preview — large & interactive for swipe -->
+                                <div x-show="a.template_path" class="mt-2 bg-slate-900 border border-dashed border-slate-600 rounded-xl overflow-hidden relative group cursor-crosshair"
+                                     @mousedown.prevent="startCoordPick(a, 'swipe', $event)"
+                                     @touchstart.prevent="startCoordPick(a, 'swipe', $event)"
+                                     @mouseup="endCoordPick(a, $event)"
+                                     @touchend="endCoordPick(a, $event)"
+                                     @contextmenu.prevent>
+                                    <img :src="'/static/' + a.template_path" class="w-full h-auto block select-none pointer-events-none" alt="Swipe template preview" draggable="false"
+                                         @load="$el.parentElement._imgLoaded = true">
+                                    <!-- Start point indicator -->
+                                    <div x-show="a._pickX != null && !a._swiping" class="absolute pointer-events-none" :style="'left:'+a._pickPctX+'%;top:'+a._pickPctY+'%'">
+                                        <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-success bg-success/20 shadow-lg shadow-success/40"></div>
+                                    </div>
+                                    <!-- Swipe line + endpoints -->
+                                    <div x-show="a._swiping && a._pickX != null" class="absolute pointer-events-none" style="left:0;top:0;width:100%;height:100%">
+                                        <svg class="absolute inset-0 w-full h-full" style="overflow:visible">
+                                            <line :x1="a._pickPctX+'%'" :y1="a._pickPctY+'%'" :x2="a._swipeCurPctX+'%'" :y2="a._swipeCurPctY+'%'" stroke="#6366F1" stroke-width="2" stroke-dasharray="6,3"/>
+                                        </svg>
+                                        <!-- Start marker -->
+                                        <div :style="'left:'+a._pickPctX+'%;top:'+a._pickPctY+'%'" class="absolute pointer-events-none">
+                                            <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-success bg-success/30 shadow-lg shadow-success/40"></div>
+                                        </div>
+                                        <!-- End marker (current) -->
+                                        <div :style="'left:'+a._swipeCurPctX+'%;top:'+a._swipeCurPctY+'%'" class="absolute pointer-events-none">
+                                            <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-danger bg-danger/30 shadow-lg shadow-danger/40"></div>
+                                        </div>
+                                    </div>
+                                    <!-- Swipe result labels -->
+                                    <div x-show="a._pickX != null && a._pickX2 != null" class="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1.5 rounded-lg font-mono pointer-events-none shadow-lg backdrop-blur-sm space-y-0.5">
+                                        <div>🟢 From: X=<span x-text="a._pickX" class="text-success font-bold"></span> Y=<span x-text="a._pickY" class="text-success font-bold"></span></div>
+                                        <div>🔴 To: X=<span x-text="a._pickX2" class="text-danger font-bold"></span> Y=<span x-text="a._pickY2" class="text-danger font-bold"></span></div>
+                                    </div>
+                                    <!-- Hint -->
+                                    <div x-show="a._pickX == null" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <span class="text-slate-500 text-sm bg-black/40 px-3 py-1 rounded-lg backdrop-blur-sm">↔️ Swipe / Drag pada gambar</span>
+                                    </div>
                                 </div>
                             </div>
-                            <!-- Template Image for End Point -->
+                            <!-- Coordinates (filled by image swipe) -->
                             <div x-show="a.template_path">
-                                <label class="block text-xs font-medium text-slate-500 mb-1">📸 Template Image (End) <span class="text-slate-600">(auto-detect to X,Y)</span></label>
-                                <div class="flex items-center gap-2">
-                                    <input x-model="a.template_path2" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih gambar untuk auto-detect end point...">
-                                    <button type="button" @click="openTemplatePicker2(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
-                                </div>
-                                <div x-show="a.template_path2" class="mt-2 bg-slate-800 border border-dashed border-slate-600 rounded-lg h-20 flex items-center justify-center text-slate-500 text-sm overflow-hidden">
-                                    <img :src="'/static/' + a.template_path2" class="max-h-full max-w-full object-contain" alt="End template preview">
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div><label class="text-xs text-success">From X</label><input x-model.number="a.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="start X"></div>
+                                    <div><label class="text-xs text-success">From Y</label><input x-model.number="a.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="start Y"></div>
+                                    <div><label class="text-xs text-danger">To X</label><input x-model.number="a.x2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="end X"></div>
+                                    <div><label class="text-xs text-danger">To Y</label><input x-model.number="a.y2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="end Y"></div>
                                 </div>
                             </div>
-                            <!-- Template Match Config -->
-                            <div x-show="a.template_path">
-                                <div class="grid grid-cols-2 gap-3 bg-slate-800/50 rounded-lg p-3 border border-slate-700/30">
-                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Match Threshold (0-1)</label><input x-model.number="a.match_threshold" type="number" min="0" max="1" step="0.05" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
-                                    <div><label class="block text-xs font-medium text-slate-500 mb-1">Retry Count</label><input x-model.number="a.retry_count" type="number" min="1" max="99" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
-                                    <div class="col-span-2"><label class="block text-xs font-medium text-slate-500 mb-1">Retry Delay (ms)</label><input x-model.number="a.retry_delay_ms" type="number" min="0" step="100" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"></div>
-                                </div>
-                            </div>
-                            <!-- Manual Coordinates -->
+                            <!-- Manual Coordinates (no template) -->
                             <div x-show="!a.template_path">
                                 <div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-slate-500">From X</label><input x-model.number="a.x" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">From Y</label><input x-model.number="a.y" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To X</label><input x-model.number="a.x2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div><div><label class="text-xs text-slate-500">To Y</label><input x-model.number="a.y2" type="number" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div></div>
                             </div>
@@ -459,6 +503,11 @@
                                 _expanded: false,
                                 _custom_key: isCustomKey ? a.key_code : (a._custom_key || ''),
                                 key_code: isCustomKey ? 'CUSTOM' : (a.key_code || 'HOME'),
+                                // coordinate picker state
+                                _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
+                                _pickPctX: null, _pickPctY: null, _swiping: false,
+                                _swipeCurPctX: null, _swipeCurPctY: null,
+                                _dragStartX: null, _dragStartY: null,
                             };
                         });
                     } catch(e) {
@@ -470,7 +519,13 @@
                 this.$nextTick(() => this.initSortable());
             },
             addAction() {
-                this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',template_path2:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false });
+                this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',template_path2:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false,
+                    // coordinate picker state
+                    _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
+                    _pickPctX: null, _pickPctY: null, _swiping: false,
+                    _swipeCurPctX: null, _swipeCurPctY: null,
+                    _dragStartX: null, _dragStartY: null,
+                });
             },
             deleteAction(idx) { this.actions.splice(idx, 1); },
             async save() {
@@ -529,6 +584,86 @@
                 }
                 alert('✅ Saved!');
             },
+            // ---- Coordinate picker (tap/swipe/longpress on template image) ----
+            getCoordsFromEvent(action, event) {
+                const img = event.target.closest('.overflow-hidden')?.querySelector('img');
+                if (!img) return null;
+                const rect = img.getBoundingClientRect();
+                const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+                const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+                const pctX = ((clientX - rect.left) / rect.width) * 100;
+                const pctY = ((clientY - rect.top) / rect.height) * 100;
+                // Assume a standard 1080p screen; use img natural dimensions as reference
+                // We scale coordinates assuming the image represents the device screen
+                const refW = 1080;
+                const refH = 1920;
+                const x = Math.round((pctX / 100) * refW);
+                const y = Math.round((pctY / 100) * refH);
+                return { x, y, pctX, pctY };
+            },
+            startCoordPick(action, mode, event) {
+                const coords = this.getCoordsFromEvent(action, event);
+                if (!coords) return;
+                if (mode === 'swipe') {
+                    action._pickX = coords.x;
+                    action._pickY = coords.y;
+                    action._pickPctX = coords.pctX;
+                    action._pickPctY = coords.pctY;
+                    action._swiping = false;
+                    action._swipeCurPctX = coords.pctX;
+                    action._swipeCurPctY = coords.pctY;
+                    action._dragStartX = coords.x;
+                    action._dragStartY = coords.y;
+                    // Listen for move/up on the container
+                    const container = event.target.closest('.overflow-hidden');
+                    const onMove = (e) => {
+                        const mc = this.getCoordsFromEvent(action, e);
+                        if (mc) {
+                            action._swiping = true;
+                            action._swipeCurPctX = mc.pctX;
+                            action._swipeCurPctY = mc.pctY;
+                        }
+                    };
+                    const onUp = (e) => {
+                        const mc = this.getCoordsFromEvent(action, e);
+                        if (mc && action._swiping) {
+                            action._pickX2 = mc.x;
+                            action._pickY2 = mc.y;
+                            action.x = action._dragStartX;
+                            action.y = action._dragStartY;
+                            action.x2 = mc.x;
+                            action.y2 = mc.y;
+                        } else if (!action._swiping) {
+                            // Was just a tap on swipe mode — treat as from point only
+                            action._pickX2 = null;
+                            action._pickY2 = null;
+                            action.x = coords.x;
+                            action.y = coords.y;
+                        }
+                        action._swiping = false;
+                        container.removeEventListener('mousemove', onMove);
+                        container.removeEventListener('mouseup', onUp);
+                        container.removeEventListener('touchmove', onMove);
+                        container.removeEventListener('touchend', onUp);
+                    };
+                    container.addEventListener('mousemove', onMove);
+                    container.addEventListener('mouseup', onUp);
+                    container.addEventListener('touchmove', onMove, {passive: false});
+                    container.addEventListener('touchend', onUp);
+                } else {
+                    // Tap / Longpress
+                    action._pickX = coords.x;
+                    action._pickY = coords.y;
+                    action._pickPctX = coords.pctX;
+                    action._pickPctY = coords.pctY;
+                    action.x = coords.x;
+                    action.y = coords.y;
+                }
+            },
+            endCoordPick(action, event) {
+                // for non-swipe mode, this is a no-op (handled in startCoordPick)
+            },
+
             initSortable() {
                 const el = document.getElementById('actions-list');
                 if (!el || sortableInstance) return;
