@@ -63,46 +63,59 @@ KEY_NAME_MAP = {
 
 
 # Cached device capabilities
-_device_rooted: bool | None = None
-_device_su_path: str | None = None
 _inject_perms_granted: bool = False
+# sendevent device paths (cached after first detection)
+_device_touch_event: str | None = None   # e.g. /dev/input/event2
+_device_key_event: str | None = None     # e.g. /dev/input/event0
+_device_max_x: int = 1080
+_device_max_y: int = 1920
+_sendevent_available: bool | None = None
 
-async def _detect_root() -> bool:
-    """Detect if the connected Android device has root (su binary)."""
-    global _device_rooted, _device_su_path
-    if _device_rooted is not None:
-        return _device_rooted
-    # Try common su paths on Android
-    for su_path in ("su", "/system/bin/su", "/system/xbin/su", "/sbin/su", "/su/bin/su"):
-        try:
-            proc = await asyncio.wait_for(
-                asyncio.create_subprocess_exec(
-                    "adb", "shell", f"{su_path} -c 'id -u'",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                ),
-                timeout=3.0,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
-            uid = stdout.decode("utf-8", errors="replace").strip()
-            if uid == "0":
-                _device_rooted = True
-                _device_su_path = su_path
-                return True
-        except Exception:
-            continue
-    _device_rooted = False
-    return False
+# Android keycode → Linux input event key code mapping (for sendevent fallback)
+_KEYCODE_TO_LINUX = {
+    # Alphabet keys
+    "KEYCODE_A": 30, "KEYCODE_B": 48, "KEYCODE_C": 46, "KEYCODE_D": 32,
+    "KEYCODE_E": 18, "KEYCODE_F": 33, "KEYCODE_G": 34, "KEYCODE_H": 35,
+    "KEYCODE_I": 23, "KEYCODE_J": 36, "KEYCODE_K": 37, "KEYCODE_L": 38,
+    "KEYCODE_M": 50, "KEYCODE_N": 49, "KEYCODE_O": 24, "KEYCODE_P": 25,
+    "KEYCODE_Q": 16, "KEYCODE_R": 19, "KEYCODE_S": 31, "KEYCODE_T": 20,
+    "KEYCODE_U": 22, "KEYCODE_V": 47, "KEYCODE_W": 17, "KEYCODE_X": 45,
+    "KEYCODE_Y": 21, "KEYCODE_Z": 44,
+    # Numbers
+    "KEYCODE_0": 11, "KEYCODE_1": 2, "KEYCODE_2": 3, "KEYCODE_3": 4,
+    "KEYCODE_4": 5, "KEYCODE_5": 6, "KEYCODE_6": 7, "KEYCODE_7": 8,
+    "KEYCODE_8": 9, "KEYCODE_9": 10,
+    # Navigation / function
+    "KEYCODE_HOME": 102, "KEYCODE_BACK": 158, "KEYCODE_ENTER": 28,
+    "KEYCODE_DEL": 14, "KEYCODE_TAB": 15, "KEYCODE_ESCAPE": 1,
+    "KEYCODE_SPACE": 57, "KEYCODE_VOLUME_UP": 115, "KEYCODE_VOLUME_DOWN": 114,
+    "KEYCODE_POWER": 116, "KEYCODE_MENU": 139, "KEYCODE_SEARCH": 217,
+    "KEYCODE_DPAD_UP": 103, "KEYCODE_DPAD_DOWN": 108,
+    "KEYCODE_DPAD_LEFT": 105, "KEYCODE_DPAD_RIGHT": 106,
+    "KEYCODE_DPAD_CENTER": 28, "KEYCODE_APP_SWITCH": 187,
+    "KEYCODE_NOTIFICATION": 83,
+    # Media
+    "KEYCODE_MEDIA_PLAY": 207, "KEYCODE_MEDIA_PAUSE": 119,
+    "KEYCODE_MEDIA_NEXT": 163, "KEYCODE_MEDIA_PREVIOUS": 165,
+    # Modifiers (Ctrl, Alt, etc.) — approximate
+    "KEYCODE_CTRL_LEFT": 29, "KEYCODE_CTRL_RIGHT": 97,
+    "KEYCODE_ALT_LEFT": 56, "KEYCODE_ALT_RIGHT": 100,
+    "KEYCODE_SHIFT_LEFT": 42, "KEYCODE_SHIFT_RIGHT": 54,
+}
 
-async def _try_grant_inject_permission() -> bool:
-    """Try to grant INJECT_EVENTS permission to the shell process via appops."""
+async def _try_grant_inject_permission(serial: str | None = None) -> bool:
+    """Try multiple ways to grant INJECT_EVENTS permission to shell."""
     global _inject_perms_granted
     if _inject_perms_granted:
         return True
+
+    adb_prefix = ("-s", serial) if serial else ()
+
+    # Method 1: appops (Android 4.4+)
     try:
         proc = await asyncio.wait_for(
             asyncio.create_subprocess_exec(
-                "adb", "shell", "appops", "set", "com.android.shell", "INJECT_EVENTS", "allow",
+                "adb", *(adb_prefix + ("shell", "appops", "set", "com.android.shell", "INJECT_EVENTS", "allow")),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             ),
@@ -114,6 +127,122 @@ async def _try_grant_inject_permission() -> bool:
             return True
     except Exception:
         pass
+
+    # Method 2: settings put global (some ROMs)
+    try:
+        proc = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                "adb", *(adb_prefix + ("shell", "settings", "put", "global",
+                "inject_events_whitelist", "com.android.shell")),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            ),
+            timeout=3.0,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=3.0)
+    except Exception:
+        pass
+
+    return False
+
+async def _detect_sendevent(serial: str | None = None) -> bool:
+    """Detect if sendevent injection is available (no root needed on many devices)."""
+    global _sendevent_available, _device_touch_event, _device_key_event
+    global _device_max_x, _device_max_y
+
+    if _sendevent_available is not None:
+        return _sendevent_available
+
+    adb_prefix = ("-s", serial) if serial else ()
+
+    # 1. Check if getevent works (indicates input group access)
+    try:
+        proc = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                "adb", *(adb_prefix + ("shell", "getevent", "-p")),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            ),
+            timeout=4.0,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=4.0)
+        out = stdout.decode("utf-8", errors="replace")
+    except Exception:
+        _sendevent_available = False
+        return False
+
+    # 2. Parse: find touchscreen and keyboard devices
+    lines = out.split("\n")
+    current_dev = None
+    current_name = ""
+    max_abs_x = 0
+    max_abs_y = 0
+
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if line.startswith("add device"):
+            current_dev = line.split(":", 1)[0].split()[-1]
+        elif line.startswith("name:"):
+            current_name = line.split(":", 1)[1].strip().strip('"')
+            if "touch" in current_name.lower() or "fts" in current_name.lower():
+                _device_touch_event = current_dev
+        elif line.startswith("keyboard") and not _device_key_event:
+            # Find the first keyboard device
+            if current_dev and not _device_key_event:
+                _device_key_event = current_dev
+        elif "ABS_MT_POSITION_X" in line or "ABS_X" in line:
+            parts = line.split(",")
+            for p in parts:
+                p = p.strip()
+                if p.startswith("max "):
+                    try:
+                        val = int(p.split()[-1])
+                        if val > max_abs_x:
+                            max_abs_x = val
+                    except ValueError:
+                        pass
+        elif "ABS_MT_POSITION_Y" in line or "ABS_Y" in line:
+            parts = line.split(",")
+            for p in parts:
+                p = p.strip()
+                if p.startswith("max "):
+                    try:
+                        val = int(p.split()[-1])
+                        if val > max_abs_y:
+                            max_abs_y = val
+                    except ValueError:
+                        pass
+
+    # 3. Get screen resolution as fallback for max x/y
+    try:
+        proc2 = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                "adb", *(adb_prefix + ("shell", "wm", "size")),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            ),
+            timeout=3.0,
+        )
+        stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=3.0)
+        size_str = stdout2.decode("utf-8", errors="replace").strip()
+        m = re.search(r"(\d+)\s*[×x]\s*(\d+)", size_str)
+        if m:
+            _device_max_x = int(m.group(1))
+            _device_max_y = int(m.group(2))
+    except Exception:
+        pass
+
+    if max_abs_x > 0:
+        _device_max_x = max_abs_x
+    if max_abs_y > 0:
+        _device_max_y = max_abs_y
+
+    # sendevent is available if we found at least a touch device
+    if _device_touch_event:
+        _sendevent_available = True
+        return True
+
+    _sendevent_available = False
     return False
 
 async def _run_adb(*args, timeout: float = 5.0) -> str:
@@ -143,21 +272,127 @@ async def _run_adb(*args, timeout: float = 5.0) -> str:
     except Exception as e:
         raise RuntimeError(f"ADB unexpected error: {e}")
 
+async def _send_event_cmd(serial: str | None, dev: str, ev_type: int, ev_code: int, ev_value: int):
+    """Inject a single input event via /dev/input/eventN — no root needed if in input group."""
+    adb_prefix = ("-s", serial) if serial else ()
+    cmd = f"sendevent {dev} {ev_type} {ev_code} {ev_value}"
+    await _run_adb(*(adb_prefix + ("shell", cmd)), timeout=3.0)
+
+async def _sendevent_key(serial: str | None, android_keycode: str):
+    """
+    Inject a key event using sendevent (press + release).
+    Falls back to KEYCODE_HOME if unknown.
+    """
+    dev = _device_key_event or _device_touch_event
+    if not dev:
+        raise RuntimeError("No input device found for sendevent")
+
+    linux_code = _KEYCODE_TO_LINUX.get(android_keycode, 102)  # default HOME
+
+    # Key down
+    await _send_event_cmd(serial, dev, 1, linux_code, 1)   # EV_KEY = 1, value=1 (down)
+    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN = 0
+    # Key up
+    await _send_event_cmd(serial, dev, 1, linux_code, 0)   # EV_KEY = 1, value=0 (up)
+    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN = 0
+
+async def _sendevent_text_char(serial: str | None, ch: str):
+    """Inject a single text character via sendevent (simplified — uses keyevent)."""
+    if ch == " ":
+        await _sendevent_key(serial, "KEYCODE_SPACE")
+    elif ch == "\n":
+        await _sendevent_key(serial, "KEYCODE_ENTER")
+    else:
+        upper_ch = ch.upper()
+        keycode = f"KEYCODE_{upper_ch}"
+        if keycode in _KEYCODE_TO_LINUX:
+            # TODO: handle shift for lowercase — for now just send uppercase keyevent
+            await _sendevent_key(serial, keycode)
+            # For lowercase, ADB input text handles this; sendevent needs manual shift handling
+        else:
+            # Try sending as-is via KEYCODE_ prefix
+            await _sendevent_key(serial, f"KEYCODE_{upper_ch}")
+
+async def _sendevent_tap(serial: str | None, x: int, y: int):
+    """
+    Inject a tap at (x, y) using sendevent to the touchscreen device.
+    Converts screen coordinates to absolute touch coordinates.
+    """
+    dev = _device_touch_event
+    if not dev:
+        raise RuntimeError("No touchscreen device found for sendevent")
+
+    # Scale coordinates to device max range
+    # Most touchscreens use 0..max range; some use different ranges. We use detected max.
+    abs_x = max(0, min(x, _device_max_x))
+    abs_y = max(0, min(y, _device_max_y))
+
+    # Touch down sequence:
+    # ABS_MT_TRACKING_ID = 57 (start tracking)
+    # ABS_MT_POSITION_X = 53, ABS_MT_POSITION_Y = 54
+    # BTN_TOUCH = 330
+    await _send_event_cmd(serial, dev, 3, 57, 0)        # ABS_MT_TRACKING_ID
+    await _send_event_cmd(serial, dev, 3, 53, abs_x)     # ABS_MT_POSITION_X
+    await _send_event_cmd(serial, dev, 3, 54, abs_y)     # ABS_MT_POSITION_Y
+    await _send_event_cmd(serial, dev, 1, 330, 1)        # BTN_TOUCH down
+    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
+
+    # Touch up sequence:
+    await _send_event_cmd(serial, dev, 3, 57, -1)       # ABS_MT_TRACKING_ID (end)
+    await _send_event_cmd(serial, dev, 1, 330, 0)        # BTN_TOUCH up
+    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
+    await asyncio.sleep(0.03)
+
+async def _sendevent_swipe(serial: str | None, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300):
+    """
+    Inject a swipe gesture using sendevent with linear interpolation.
+    """
+    dev = _device_touch_event
+    if not dev:
+        raise RuntimeError("No touchscreen device found for sendevent")
+
+    # Number of interpolation steps
+    steps = max(5, duration_ms // 16)  # ~60fps touch sampling
+
+    # Touch down at start position
+    sx = max(0, min(x1, _device_max_x))
+    sy = max(0, min(y1, _device_max_y))
+    await _send_event_cmd(serial, dev, 3, 57, 0)        # ABS_MT_TRACKING_ID
+    await _send_event_cmd(serial, dev, 3, 53, sx)        # ABS_MT_POSITION_X
+    await _send_event_cmd(serial, dev, 3, 54, sy)        # ABS_MT_POSITION_Y
+    await _send_event_cmd(serial, dev, 1, 330, 1)        # BTN_TOUCH down
+    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
+
+    # Interpolate positions
+    for i in range(1, steps + 1):
+        t = i / steps
+        cx = max(0, min(int(x1 + (x2 - x1) * t), _device_max_x))
+        cy = max(0, min(int(y1 + (y2 - y1) * t), _device_max_y))
+        await _send_event_cmd(serial, dev, 3, 53, cx)    # ABS_MT_POSITION_X
+        await _send_event_cmd(serial, dev, 3, 54, cy)    # ABS_MT_POSITION_Y
+        await _send_event_cmd(serial, dev, 0, 0, 0)      # EV_SYN
+        if i < steps:
+            await asyncio.sleep(duration_ms / 1000 / steps)
+
+    # Touch up
+    await _send_event_cmd(serial, dev, 3, 57, -1)       # ABS_MT_TRACKING_ID (end)
+    await _send_event_cmd(serial, dev, 1, 330, 0)        # BTN_TOUCH up
+    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
+    await asyncio.sleep(0.03)
+
 async def _run_adb_input(serial: str | None, *input_args, timeout: float = 5.0) -> str:
     """
-    Run an 'adb shell input <args>' command, automatically using su for root,
-    and retrying with permission grant on SecurityException.
+    Run an 'adb shell input <args>' command.
+    Falls back to sendevent (no root needed) if INJECT_EVENTS permission is denied.
     
     Args:
         serial: ADB device serial (or None for default device)
         *input_args: Arguments to the `input` subcommand (e.g. "tap", "100", "200")
     """
-    cmd_str = "input " + " ".join(str(a) for a in input_args)
-
     # Build ADB prefix args
     adb_prefix = ("-s", serial) if serial else ()
 
-    # Strategy 1: Direct call (works on rooted Magisk devices, or devices with permissive SELinux)
+    # Strategy 1: Direct call
     try:
         return await _run_adb(*(adb_prefix + ("shell", "input") + input_args), timeout=timeout)
     except RuntimeError as e:
@@ -167,7 +402,7 @@ async def _run_adb_input(serial: str | None, *input_args, timeout: float = 5.0) 
 
     # Strategy 2: Try granting INJECT_EVENTS permission, then retry direct call
     if not _inject_perms_granted:
-        granted = await _try_grant_inject_permission()
+        granted = await _try_grant_inject_permission(serial)
         if granted:
             try:
                 return await _run_adb(*(adb_prefix + ("shell", "input") + input_args), timeout=timeout)
@@ -176,16 +411,34 @@ async def _run_adb_input(serial: str | None, *input_args, timeout: float = 5.0) 
                 if "INJECT_EVENTS" not in err_str and "SecurityException" not in err_str:
                     raise
 
-    # Strategy 3: Use su (root) if available
-    rooted = await _detect_root()
-    if rooted and _device_su_path:
-        su_cmd = f"{_device_su_path} -c '{cmd_str}'"
-        return await _run_adb(*(adb_prefix + ("shell", su_cmd)), timeout=timeout)
+    # Strategy 3: Fallback to sendevent (no root needed — works via input group)
+    sendevent_ok = await _detect_sendevent(serial)
+    if sendevent_ok:
+        if input_args[0] == "keyevent":
+            keycode = input_args[1]
+            await _sendevent_key(serial, keycode)
+            return ""
+        elif input_args[0] == "text":
+            text = input_args[1]
+            for ch in text:
+                await _sendevent_text_char(serial, ch)
+                await asyncio.sleep(0.02)
+            return ""
+        elif input_args[0] == "tap":
+            x, y = int(input_args[1]), int(input_args[2])
+            await _sendevent_tap(serial, x, y)
+            return ""
+        elif input_args[0] == "swipe":
+            x1, y1, x2, y2 = int(input_args[1]), int(input_args[2]), int(input_args[3]), int(input_args[4])
+            duration_ms = int(input_args[5]) if len(input_args) > 5 else 300
+            await _sendevent_swipe(serial, x1, y1, x2, y2, duration_ms)
+            return ""
 
     # Strategy 4: Give up with helpful error
     raise RuntimeError(
         f"INJECT_EVENTS permission denied. This device does not allow ADB input injection.\n"
-        f"Try: 1) Root the device  2) Enable 'USB debugging (Security Settings)' in Developer Options  3) Use a device with Android < 10"
+        f"Try: 1) Enable 'USB debugging (Security Settings)' in Developer Options\n"
+        f"     2) Settings → Developer options → Allow screen overlays on settings"
     )
 
 
