@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from config import HOST, PORT, DEBUG, DATABASE_PATH
+from config import HOST, PORT, DEBUG, DATABASE_PATH, TEMPLATE_DIR
 from database.connection import init_db, close_db, get_db
 from middleware.auth_middleware import auth_middleware, get_token_from_request, verify_token
 from routers import auth, scripts, actions, executor, device
@@ -257,6 +257,29 @@ async def upload_template(file: UploadFile = File(...)):
     # Return path relative to data/ so it can be served as static
     relative_path = f"templates/{safe_name}"
     return {"path": relative_path, "filename": safe_name, "url": f"/static/{relative_path}"}
+
+@app.get("/api/templates")
+async def list_template_images():
+    """List all template images available on the server."""
+    import config
+    os.makedirs(config.TEMPLATE_DIR, exist_ok=True)
+    files = []
+    allowed = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'}
+    try:
+        for fname in sorted(os.listdir(config.TEMPLATE_DIR)):
+            ext = os.path.splitext(fname)[-1].lower()
+            if ext in allowed:
+                full = os.path.join(config.TEMPLATE_DIR, fname)
+                size = os.path.getsize(full)
+                files.append({
+                    "path": f"templates/{fname}",
+                    "filename": fname,
+                    "url": f"/static/templates/{fname}",
+                    "size": size
+                })
+    except FileNotFoundError:
+        pass
+    return {"templates": files}
 
 # ---- Run ----
 if __name__ == "__main__":

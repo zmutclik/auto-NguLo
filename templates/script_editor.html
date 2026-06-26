@@ -106,8 +106,7 @@
                                 <label class="block text-xs font-medium text-slate-500 mb-1">Template Image</label>
                                 <div class="flex items-center gap-2">
                                     <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Pilih gambar template...">
-                                    <button type="button" @click="$el.nextElementSibling.click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
-                                    <input type="file" accept="image/*" class="hidden" @change="handleTemplateUpload($event, a)">
+                                    <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-3">
@@ -269,6 +268,37 @@
         <div x-show="actions.length > 0" class="flex justify-end pt-2">
             <button @click="save()" class="bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 text-sm">💾 <span x-text="isNew ? 'Create Script' : 'Save All Changes'"></span></button>
         </div>
+
+        <!-- Template Picker Modal (inside x-data) -->
+        <div x-show="showTemplateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" x-transition.opacity @click.self="showTemplateModal = false">
+            <div class="bg-slate-800 border border-surface-border rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden shadow-2xl" @click.stop="">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+                    <h3 class="font-semibold text-slate-100">📁 Pilih Template Image</h3>
+                    <button @click="showTemplateModal = false" class="text-slate-400 hover:text-slate-200 text-lg cursor-pointer">✕</button>
+                </div>
+                <div class="px-5 py-3 max-h-[50vh] overflow-y-auto space-y-2">
+                    <p class="text-xs text-slate-500 font-medium mb-2">📂 Gambar di server</p>
+                    <template x-if="templateList.length === 0">
+                        <p class="text-sm text-slate-500 text-center py-8">Belum ada gambar. Upload dari bawah ↓</p>
+                    </template>
+                    <template x-for="tpl in templateList" :key="tpl.path">
+                        <div @click="selectTemplate(tpl)" :class="tplPickerAction && tplPickerAction.template_path === tpl.path ? 'border-brand bg-brand/10' : 'border-transparent bg-slate-900/50 hover:border-slate-600'" class="flex items-center gap-3 p-3 border rounded-xl cursor-pointer transition-all">
+                            <img :src="tpl.url" class="w-12 h-12 rounded-lg object-cover bg-slate-700 shrink-0" alt="">
+                            <div class="flex-1 min-w-0"><p class="text-sm text-slate-200 truncate" x-text="tpl.filename"></p><p class="text-xs text-slate-500" x-text="(tpl.size/1024).toFixed(1)+' KB'"></p></div>
+                            <span x-show="tplPickerAction && tplPickerAction.template_path === tpl.path" class="text-brand">✓</span>
+                        </div>
+                    </template>
+                </div>
+                <div class="px-5 py-4 border-t border-surface-border bg-slate-900/50">
+                    <p class="text-xs text-slate-500 font-medium mb-2">📤 Upload gambar baru</p>
+                    <div class="flex items-center gap-2">
+                        <input type="file" accept="image/*" class="hidden" @change="uploadTemplateFromModal($event)">
+                        <button @click="$el.previousElementSibling.click()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2.5 transition-colors cursor-pointer">📁 Pilih file...</button>
+                    </div>
+                    <div x-show="uploadingTpl" class="mt-2 text-xs text-slate-400">⏳ Uploading...</div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -283,18 +313,57 @@
             _counter: 100,
             actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text'],
             typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝'}[t]||'❓'; },
-            async handleTemplateUpload(event, action) {
+
+            // Template picker modal state
+            showTemplateModal: false,
+            tplPickerAction: null,
+            templateList: [],
+            uploadingTpl: false,
+
+            async openTemplatePicker(action) {
+                this.tplPickerAction = action;
+                this.showTemplateModal = true;
+                await this.loadTemplateList();
+            },
+            async loadTemplateList() {
+                try {
+                    const r = await fetch('/api/templates');
+                    if (r.ok) {
+                        const data = await r.json();
+                        this.templateList = data.templates || [];
+                    }
+                } catch(e) {
+                    this.templateList = [];
+                }
+            },
+            selectTemplate(tpl) {
+                if (this.tplPickerAction) {
+                    this.tplPickerAction.template_path = tpl.path;
+                }
+                this.showTemplateModal = false;
+                this.tplPickerAction = null;
+            },
+            async uploadTemplateFromModal(event) {
                 const file = event.target.files[0];
                 if (!file) return;
+                this.uploadingTpl = true;
                 const formData = new FormData();
                 formData.append('file', file);
                 try {
                     const r = await fetch('/api/upload/template', { method: 'POST', body: formData });
                     if (!r.ok) { const err = await r.json(); throw new Error(err.detail || 'Upload failed'); }
                     const data = await r.json();
-                    action.template_path = data.path;
+                    if (this.tplPickerAction) {
+                        this.tplPickerAction.template_path = data.path;
+                    }
+                    this.showTemplateModal = false;
+                    this.tplPickerAction = null;
+                    // Reload list for next open
+                    this.templateList = [];
                 } catch(e) {
                     alert('⚠️ Upload gagal: ' + e.message);
+                } finally {
+                    this.uploadingTpl = false;
                 }
             },
             async init() {

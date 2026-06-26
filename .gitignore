@@ -44,3 +44,6 @@ tmp/
 data/*.db
 data/angulo.*
 data/*.log
+data/templates/*.jpg
+data/templates/*.jpeg
+data/templates/*.png
