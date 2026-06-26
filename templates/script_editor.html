@@ -48,6 +48,11 @@
             <div class="mt-6 pt-4 border-t border-surface-border">
                 <div class="flex items-center justify-between text-sm"><span class="text-slate-400">Actions</span><span class="text-brand font-bold" x-text="actions.length + ' actions'"></span></div>
             </div>
+            <div class="mt-3 pt-3 border-t border-surface-border">
+                <p class="text-xs text-slate-500 mb-1">📱 Device Resolution</p>
+                <p class="text-sm text-slate-200 font-mono" x-text="deviceResolution.w + ' × ' + deviceResolution.h"></p>
+                <p class="text-xs text-slate-600 mt-0.5">Koordinat dihitung berdasarkan resolusi ini</p>
+            </div>
         </div>
     </div>
 
@@ -94,7 +99,7 @@
                                     <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih screenshot untuk referensi koordinat...">
                                     <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
                                 </div>
-                                <p class="text-xs text-slate-600 mt-1">Pilih gambar lalu <b>tap/klik</b> pada gambar untuk ambil koordinat X,Y</p>
+                                <p class="text-xs text-slate-600 mt-1">Pilih gambar lalu <b>tap/klik</b> pada gambar untuk ambil koordinat X,Y <span class="text-brand">· Resolusi device: <span x-text="deviceResolution.w + '×' + deviceResolution.h"></span></span></p>
                                 <!-- Template preview — large & interactive -->
                                 <div x-show="a.template_path" class="mt-2 bg-slate-900 border border-dashed border-slate-600 rounded-xl overflow-hidden relative group cursor-crosshair"
                                      @mousedown.prevent="startCoordPick(a, 'tap', $event)"
@@ -146,7 +151,7 @@
                                     <input x-model="a.template_path" type="text" readonly class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand font-mono" placeholder="Opsional: pilih screenshot untuk referensi koordinat swipe...">
                                     <button type="button" @click="openTemplatePicker(a)" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 transition-colors shrink-0 cursor-pointer">📁 Browse</button>
                                 </div>
-                                <p class="text-xs text-slate-600 mt-1">Pilih gambar lalu <b>swipe</b> (drag) pada gambar untuk ambil koordinat <span class="text-success">from</span> → <span class="text-danger">to</span></p>
+                                <p class="text-xs text-slate-600 mt-1">Pilih gambar lalu <b>swipe</b> (drag) pada gambar untuk ambil koordinat <span class="text-success">from</span> → <span class="text-danger">to</span> <span class="text-brand">· Resolusi device: <span x-text="deviceResolution.w + '×' + deviceResolution.h"></span></span></p>
                                 <!-- Template preview — large & interactive for swipe -->
                                 <div x-show="a.template_path" class="mt-2 bg-slate-900 border border-dashed border-slate-600 rounded-xl overflow-hidden relative group cursor-crosshair"
                                      @mousedown.prevent="startCoordPick(a, 'swipe', $event)"
@@ -412,6 +417,8 @@
             script: { name: '', description: '', repeat_count: 1, delay_between_ms: 1000 },
             actions: [],
             _counter: 100,
+            // Device resolution (fetched from /api/device/info); defaults to 1080x1920
+            deviceResolution: { w: 1080, h: 1920 },
             actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text'],
             typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝'}[t]||'❓'; },
 
@@ -476,7 +483,31 @@
                     this.uploadingTpl = false;
                 }
             },
+            async fetchDeviceResolution() {
+                try {
+                    // Timeout after 3 seconds to avoid blocking the UI
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 3000);
+                    const r = await fetch('/api/device/info', { signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    if (r.ok) {
+                        const info = await r.json();
+                        // Parse resolution string like "720 × 1600" or "1080 × 1920"
+                        const match = (info.resolution || '').match(/(\d+)\s*[×x]\s*(\d+)/i);
+                        if (match) {
+                            this.deviceResolution = { w: parseInt(match[1]), h: parseInt(match[2]) };
+                            console.log('[scriptEditor] Device resolution:', this.deviceResolution);
+                        } else {
+                            console.warn('[scriptEditor] Could not parse resolution string:', info.resolution);
+                        }
+                    }
+                } catch(e) {
+                    console.warn('[scriptEditor] Could not fetch device resolution, using default 1080x1920:', e.message || e);
+                }
+            },
             async init() {
+                // Fetch device resolution first (non-blocking, but before any coordinate picks)
+                await this.fetchDeviceResolution();
                 // Check for script_id from template variable first, then fallback to ?id= query param
                 const templateId = document.getElementById('script-editor-root')?.dataset?.scriptId;
                 if (templateId) {
@@ -593,10 +624,9 @@
                 const clientY = event.touches ? event.touches[0].clientY : event.clientY;
                 const pctX = ((clientX - rect.left) / rect.width) * 100;
                 const pctY = ((clientY - rect.top) / rect.height) * 100;
-                // Assume a standard 1080p screen; use img natural dimensions as reference
-                // We scale coordinates assuming the image represents the device screen
-                const refW = 1080;
-                const refH = 1920;
+                // Use actual device resolution for coordinate mapping
+                const refW = this.deviceResolution.w;
+                const refH = this.deviceResolution.h;
                 const x = Math.round((pctX / 100) * refW);
                 const y = Math.round((pctY / 100) * refH);
                 return { x, y, pctX, pctY };
