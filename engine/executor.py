@@ -180,19 +180,24 @@ async def _detect_sendevent(serial: str | None = None) -> bool:
     lines = out.split("\n")
     current_dev = None
     current_name = ""
+    current_keys = {}
     max_abs_x = 0
     max_abs_y = 0
+
+    # Device candidates
+    best_key_dev = None          # device that supports POWER/VOLUME keys
+    best_key_name = ""
 
     for i, line in enumerate(lines):
         line = line.strip()
         if line.startswith("add device"):
             current_dev = line.split(":", 1)[1].strip()
+            current_name = ""
         elif line.startswith("name:"):
             current_name = line.split(":", 1)[1].strip().strip('"')
             if "touch" in current_name.lower() or "fts" in current_name.lower():
                 _device_touch_event = current_dev
         elif line.startswith("keyboard") and not _device_key_event:
-            # Find the first keyboard device
             if current_dev and not _device_key_event:
                 _device_key_event = current_dev
         elif "ABS_MT_POSITION_X" in line or "ABS_X" in line:
@@ -218,6 +223,29 @@ async def _detect_sendevent(serial: str | None = None) -> bool:
                     except ValueError:
                         pass
 
+    # 2.5 Find the device that supports POWER (116) / VOLUME (114/115) keys
+    # Hardware keys often use gpio-keys, not the main keyboard/touch input
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if line.startswith("add device"):
+            current_dev = line.split(":", 1)[1].strip()
+            current_name = ""
+        elif line.startswith("name:"):
+            current_name = line.split(":", 1)[1].strip().strip('"')
+        elif line.startswith("events:"):
+            # events: EV_KEY (0001): 0001 0002 ... 0072 0073 ... etc.
+            # Keys are space-separated hex codes after "EV_KEY (0001):"
+            m = re.search(r"EV_KEY\s*\(0001\):\s*(.*)", line)
+            if m and current_dev:
+                key_codes = [int(k, 16) for k in m.group(1).split()]
+                has_power = 116 in key_codes
+                has_vol_down = 114 in key_codes
+                has_vol_up = 115 in key_codes
+                if has_power or has_vol_down:
+                    best_key_dev = current_dev
+                    best_key_name = current_name
+                    print(f"[_detect_sendevent] found hardware keys device: {best_key_dev} ({best_key_name}) — power={has_power}, vol_down={has_vol_down}, vol_up={has_vol_up}")
+
     # 3. Get screen resolution as fallback for max x/y
     try:
         proc2 = await asyncio.wait_for(
@@ -236,6 +264,11 @@ async def _detect_sendevent(serial: str | None = None) -> bool:
             _device_max_y = int(m.group(2))
     except Exception:
         pass
+
+    # If we found a dedicated hardware keys device (gpio-keys), prefer it for key events
+    if best_key_dev:
+        _device_key_event = best_key_dev
+        print(f"[_detect_sendevent] using hardware keys device: {best_key_dev} ({best_key_name})")
 
     if max_abs_x > 0:
         _device_max_x = max_abs_x
@@ -304,6 +337,51 @@ async def _sendevent_key(serial: str | None, android_keycode: str):
     # Key up
     await _send_event_cmd(serial, dev, 1, linux_code, 0)   # EV_KEY = 1, value=0 (up)
     await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN = 0
+
+async def _sendevent_key_down(serial: str | None, android_keycode: str):
+    """Press a key (down only, no release). For multi-key combos."""
+    dev = _device_key_event or _device_touch_event
+    if not dev:
+        raise RuntimeError("No input device found for sendevent")
+    linux_code = _KEYCODE_TO_LINUX.get(android_keycode, 102)
+    print(f"[sendevent_key_down] {android_keycode} → linux={linux_code}, dev={dev}")
+    await _send_event_cmd(serial, dev, 1, linux_code, 1)   # EV_KEY down
+    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN
+
+async def _sendevent_key_up(serial: str | None, android_keycode: str):
+    """Release a key (up only). For multi-key combos."""
+    dev = _device_key_event or _device_touch_event
+    if not dev:
+        raise RuntimeError("No input device found for sendevent")
+    linux_code = _KEYCODE_TO_LINUX.get(android_keycode, 102)
+    print(f"[sendevent_key_up] {android_keycode} → linux={linux_code}, dev={dev}")
+    await _send_event_cmd(serial, dev, 1, linux_code, 0)   # EV_KEY up
+    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN
+
+async def _sendevent_combo(serial: str | None, keys: list[str], hold_ms: int = 150):
+    """
+    Execute a simultaneous key combo via sendevent.
+    Presses all keys together, holds, then releases all.
+    This is needed because ADB's `input keyevent` only supports
+    press-and-release per key, not holding multiple keys at once.
+    """
+    if not keys:
+        return
+
+    # Ensure sendevent is detected
+    if not await _detect_sendevent(serial):
+        raise RuntimeError("sendevent not available for combo")
+
+    # Press all keys
+    for key in keys:
+        await _sendevent_key_down(serial, key)
+
+    # Hold
+    await asyncio.sleep(hold_ms / 1000.0)
+
+    # Release all keys (reverse order)
+    for key in reversed(keys):
+        await _sendevent_key_up(serial, key)
 
 async def _sendevent_text_char(serial: str | None, ch: str):
     """Inject a single text character via sendevent (simplified — uses keyevent)."""
@@ -628,11 +706,25 @@ class ScriptExecutor:
             await asyncio.sleep(0.1)
         else:
             self._log("info", f"  ⌨️  combo: {action} → {keys}")
-            for i, key in enumerate(keys):
-                await _run_adb_input(self._serial, "keyevent", key)
-                if i < len(keys) - 1:
-                    await asyncio.sleep(0.03)
-            await asyncio.sleep(0.05)
+            # For single-key combos (back, home, etc.), send normally
+            if len(keys) == 1:
+                await _run_adb_input(self._serial, "keyevent", keys[0])
+                await asyncio.sleep(0.05)
+                return
+
+            # Multi-key combo (e.g. screenshot = VOLUME_DOWN + POWER)
+            # Use sendevent to press all keys simultaneously, then release
+            try:
+                await _sendevent_combo(self._serial, keys, hold_ms=500)
+                await asyncio.sleep(0.05)
+            except RuntimeError:
+                # Fallback: send keys sequentially (imperfect but better than nothing)
+                self._log("warn", f"  ⚠️  sendevent unavailable, falling back to sequential keyevents")
+                for i, key in enumerate(keys):
+                    await _run_adb_input(self._serial, "keyevent", key)
+                    if i < len(keys) - 1:
+                        await asyncio.sleep(0.03)
+                await asyncio.sleep(0.05)
 
     async def _screenshot_match(self, template_path: str, threshold: float,
                                   retry_count: int, retry_delay_ms: int) -> tuple:
