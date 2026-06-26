@@ -541,6 +541,8 @@
                                 _dragStartX: null, _dragStartY: null,
                             };
                         });
+                        // Restore coordinate picker overlays from saved X,Y values
+                        this.actions.forEach(a => this.restorePickCoords(a));
                     } catch(e) {
                         alert('⚠️ Gagal memuat script: ' + e.message);
                         window.location.href = '/dashboard';
@@ -616,6 +618,21 @@
                 alert('✅ Saved!');
             },
             // ---- Coordinate picker (tap/swipe/longpress on template image) ----
+            // Convert saved X,Y → percentage for crosshair overlay restoration
+            restorePickCoords(action) {
+                const refW = this.deviceResolution.w;
+                const refH = this.deviceResolution.h;
+                if (action.x != null) {
+                    action._pickX = action.x;
+                    action._pickY = action.y;
+                    action._pickPctX = (action.x / refW) * 100;
+                    action._pickPctY = (action.y / refH) * 100;
+                }
+                if (action.x2 != null && action.action_type === 'swipe') {
+                    action._pickX2 = action.x2;
+                    action._pickY2 = action.y2;
+                }
+            },
             getCoordsFromEvent(action, event) {
                 const img = event.target.closest('.overflow-hidden')?.querySelector('img');
                 if (!img) return null;
