@@ -352,6 +352,15 @@
                         if (r.ok) { const na = await r.json(); a.id = na.id; }
                     }
                 }
+                // Sync action order after all saves
+                const orderedIds = this.actions.map(a => a.id).filter(id => id != null);
+                if (orderedIds.length > 0) {
+                    await fetch(`/api/scripts/${scriptId}/actions/reorder/apply`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ order: orderedIds })
+                    });
+                }
                 alert('✅ Saved!');
             },
             initSortable() {
