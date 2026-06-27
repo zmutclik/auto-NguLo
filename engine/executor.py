@@ -10,13 +10,24 @@ import re
 import tempfile
 from typing import Callable, Optional
 
-# OpenCV — optional, used for template matching on screenshots
+# Image processing — OpenCV preferred (fast), Pillow+numpy as fallback for template matching
+import numpy as np
+_NUMPY_AVAILABLE = True
+
 try:
     import cv2
-    import numpy as np
     _OPENCV_AVAILABLE = True
 except ImportError:
     _OPENCV_AVAILABLE = False
+
+try:
+    from PIL import Image
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
+
+# Template matching available if we have either OpenCV or (numpy + Pillow)
+_TEMPLATE_MATCH_AVAILABLE = _OPENCV_AVAILABLE or (_NUMPY_AVAILABLE and _PIL_AVAILABLE)
 
 # ---- ADB Helper utilities ----
 
@@ -762,11 +773,14 @@ class ScriptExecutor:
         tmp_path = save_path or os.path.join(tempfile.gettempdir(), f"angulo_screen_{time.time():.0f}.png")
         if self.mock_mode:
             # In mock mode, create a dummy black image
-            if _OPENCV_AVAILABLE:
+            if _PIL_AVAILABLE:
+                img = Image.new('RGB', (1080, 1920), color=(0, 0, 0))
+                img.save(tmp_path, 'PNG')
+            elif _OPENCV_AVAILABLE:
                 img = np.zeros((1920, 1080, 3), dtype=np.uint8)
                 cv2.imwrite(tmp_path, img)
             else:
-                # Create a minimal valid PNG
+                # Create a minimal valid PNG without any image library
                 import struct, zlib
                 def _make_minimal_png(path):
                     sig = b'\x89PNG\r\n\x1a\n'
@@ -798,6 +812,73 @@ class ScriptExecutor:
             raise RuntimeError(f"Failed to capture screenshot: {e}")
         return tmp_path
 
+    def _match_template_numpy(self, screen_path: str, template_path: str) -> tuple:
+        """
+        Pure numpy + Pillow template matching (TM_CCOEFF_NORMED).
+        Uses FFT for cross-correlation and integral images for local variance.
+        Returns (max_score: float, x: int, y: int) — top-left corner of best match.
+        """
+        # Read images with Pillow, convert to grayscale numpy arrays
+        screen_img = Image.open(screen_path).convert('L')
+        template_img = Image.open(template_path).convert('L')
+
+        screen = np.array(screen_img, dtype=np.float64)
+        template = np.array(template_img, dtype=np.float64)
+
+        th, tw = template.shape
+        ih, iw = screen.shape
+
+        rh = ih - th + 1
+        rw = iw - tw + 1
+
+        if rh <= 0 or rw <= 0:
+            return (0.0, 0, 0)
+
+        # ---- Step 1: Cross-correlation numerator via FFT ----
+        t_mean = template.mean()
+        t_std = template.std()
+        if t_std < 1e-10:
+            return (0.0, 0, 0)
+        t_norm = template - t_mean
+
+        # Zero-pad to avoid FFT circular correlation artifacts
+        pad_h, pad_w = ih + th - 1, iw + tw - 1
+        F_screen = np.fft.rfft2(screen, s=(pad_h, pad_w))
+        F_template = np.fft.rfft2(t_norm[::-1, ::-1], s=(pad_h, pad_w))  # flipped for correlation
+        cross_corr = np.fft.irfft2(F_screen * F_template)
+
+        # Crop to valid region
+        numerator = cross_corr[th - 1: th - 1 + rh, tw - 1: tw - 1 + rw]
+
+        # ---- Step 2: Denominator (local image std) via integral images ----
+        integral = np.zeros((ih + 1, iw + 1))
+        integral[1:, 1:] = screen.cumsum(axis=0).cumsum(axis=1)
+
+        integral_sq = np.zeros((ih + 1, iw + 1))
+        integral_sq[1:, 1:] = (screen ** 2).cumsum(axis=0).cumsum(axis=1)
+
+        # All patch sums at once via integral image slicing
+        sums = (integral[th:, tw:] - integral[:rh, tw:]
+                - integral[th:, :rw] + integral[:rh, :rw])
+        sq_sums = (integral_sq[th:, tw:] - integral_sq[:rh, tw:]
+                   - integral_sq[th:, :rw] + integral_sq[:rh, :rw])
+
+        n_pixels = th * tw
+        means = sums / n_pixels
+        vars_ = np.maximum(sq_sums / n_pixels - means ** 2, 0.0)
+        stds = np.sqrt(vars_)
+
+        denominator = t_std * stds * n_pixels
+        valid = denominator > 1e-10
+
+        result = np.zeros((rh, rw))
+        result[valid] = numerator[valid] / denominator[valid]
+
+        # Find best match
+        max_idx = np.argmax(result)
+        max_y, max_x = divmod(max_idx, rw)
+        return (float(result[max_y, max_x]), int(max_x), int(max_y))
+
     async def _match_template_on_screen(self, template_path: str, threshold: float,
                                           region: tuple = None) -> tuple:
         """
@@ -805,11 +886,10 @@ class ScriptExecutor:
         Returns (found: bool, x: float, y: float).
         x, y are the center coordinates of the match (in full-screen coords).
 
-        If region=(rx, ry, rw, rh) is provided, only search that crop area.
-        Returned coordinates are relative to the full screen, not the crop.
+        Uses OpenCV if available, falls back to numpy+Pillow.
         """
-        if not _OPENCV_AVAILABLE:
-            self._log("warn", "  ⚠️ OpenCV not installed, cannot do real template matching. Install: pip install opencv-python numpy")
+        if not _TEMPLATE_MATCH_AVAILABLE:
+            self._log("warn", "  ⚠️ No image library available (install opencv-python or Pillow+numpy)")
             if self.mock_mode:
                 return (True, 540.0, 1200.0)
             return (False, 0, 0)
@@ -817,7 +897,6 @@ class ScriptExecutor:
         # Resolve template file path
         template_full_path = template_path
         if not os.path.isabs(template_path):
-            # template_path is like "templates/filename.png" — resolve from data/
             template_full_path = os.path.join("data", template_path)
         if not os.path.isfile(template_full_path):
             raise RuntimeError(f"Template file not found: {template_full_path}")
@@ -826,52 +905,78 @@ class ScriptExecutor:
         screen_path = await self._capture_screenshot()
 
         try:
-            # Read images
-            screen = cv2.imread(screen_path)
-            template = cv2.imread(template_full_path)
+            if _OPENCV_AVAILABLE:
+                # ---- OpenCV path (fast) ----
+                screen = cv2.imread(screen_path)
+                template = cv2.imread(template_full_path)
+                if screen is None:
+                    raise RuntimeError(f"Failed to read screenshot from {screen_path}")
+                if template is None:
+                    raise RuntimeError(f"Failed to read template from {template_full_path}")
 
-            if screen is None:
-                raise RuntimeError(f"Failed to read screenshot from {screen_path}")
-            if template is None:
-                raise RuntimeError(f"Failed to read template from {template_full_path}")
-
-            th, tw = template.shape[:2]
-            sh, sw = screen.shape[:2]
-
-            # Apply region crop if specified
-            region_offset_x, region_offset_y = 0, 0
-            if region is not None:
-                rx, ry, rw, rh = region
-                # Clamp to screen bounds
-                rx = max(0, int(rx))
-                ry = max(0, int(ry))
-                rw = min(int(rw), sw - rx)
-                rh = min(int(rh), sh - ry)
-                if rw <= 0 or rh <= 0:
-                    raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw},{rh}) — not within screen {sw}x{sh}")
-                screen = screen[ry:ry+rh, rx:rx+rw]
-                region_offset_x, region_offset_y = rx, ry
+                th, tw = template.shape[:2]
                 sh, sw = screen.shape[:2]
-                self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw} h={rh} (screen {region_offset_x+sw}x{region_offset_y+sh})")
 
-            if tw > sw or th > sh:
-                raise RuntimeError(f"Template ({tw}x{th}) is larger than search area ({sw}x{sh})")
+                region_offset_x, region_offset_y = 0, 0
+                if region is not None:
+                    rx, ry, rw_, rh_ = region
+                    rx = max(0, int(rx)); ry = max(0, int(ry))
+                    rw_ = min(int(rw_), sw - rx); rh_ = min(int(rh_), sh - ry)
+                    if rw_ <= 0 or rh_ <= 0:
+                        raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw_},{rh_}) — not within screen {sw}x{sh}")
+                    screen = screen[ry:ry+rh_, rx:rx+rw_]
+                    region_offset_x, region_offset_y = rx, ry
+                    sh, sw = screen.shape[:2]
+                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_}")
 
-            # Template matching
-            result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                if tw > sw or th > sh:
+                    raise RuntimeError(f"Template ({tw}x{th}) larger than search area ({sw}x{sh})")
 
-            self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
+                result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
 
-            if max_val >= threshold:
-                # Center of match — add region offset so coords are full-screen
-                cx = region_offset_x + max_loc[0] + tw / 2.0
-                cy = region_offset_y + max_loc[1] + th / 2.0
-                return (True, float(cx), float(cy))
-            else:
+                if max_val >= threshold:
+                    cx = region_offset_x + max_loc[0] + tw / 2.0
+                    cy = region_offset_y + max_loc[1] + th / 2.0
+                    return (True, float(cx), float(cy))
                 return (False, 0.0, 0.0)
+
+            else:
+                # ---- numpy + Pillow path (fallback) ----
+                screen_img = Image.open(screen_path)
+                template_img = Image.open(template_full_path)
+                tw, th = template_img.size  # PIL uses (w, h)
+
+                sw, sh = screen_img.size
+                region_offset_x, region_offset_y = 0, 0
+
+                if region is not None:
+                    rx, ry, rw_, rh_ = region
+                    rx = max(0, int(rx)); ry = max(0, int(ry))
+                    rw_ = min(int(rw_), sw - rx); rh_ = min(int(rh_), sh - ry)
+                    if rw_ <= 0 or rh_ <= 0:
+                        raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw_},{rh_}) — not within screen {sw}x{sh}")
+                    screen_img = screen_img.crop((rx, ry, rx + rw_, ry + rh_))
+                    region_offset_x, region_offset_y = rx, ry
+                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_}")
+
+                if tw > screen_img.size[0] or th > screen_img.size[1]:
+                    raise RuntimeError(f"Template ({tw}x{th}) larger than search area")
+
+                # Save cropped screen for numpy loading (Pillow → numpy array)
+                screen_img.save(screen_path)
+
+                max_val, mx, my = self._match_template_numpy(screen_path, template_full_path)
+                self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
+
+                if max_val >= threshold:
+                    cx = region_offset_x + mx + tw / 2.0
+                    cy = region_offset_y + my + th / 2.0
+                    return (True, float(cx), float(cy))
+                return (False, 0.0, 0.0)
+
         finally:
-            # Clean up screenshot temp file
             try:
                 os.unlink(screen_path)
             except Exception:
@@ -886,7 +991,7 @@ class ScriptExecutor:
                 return (False, 0, 0)
             if self.mock_mode:
                 self._log("info", f"  [mock] match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
-                if _OPENCV_AVAILABLE:
+                if _TEMPLATE_MATCH_AVAILABLE:
                     # Try real matching even in mock mode (but with dummy screenshot)
                     found, mx, my = await self._match_template_on_screen(template_path, threshold, region)
                     if found:
