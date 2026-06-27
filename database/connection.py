@@ -36,6 +36,7 @@ async def init_db():
             description     TEXT DEFAULT '',
             repeat_count    INTEGER DEFAULT 1,
             delay_between_ms INTEGER DEFAULT 1000,
+            stop_on_failure INTEGER DEFAULT 0,
             created_at      TEXT DEFAULT (datetime('now')),
             updated_at      TEXT DEFAULT (datetime('now'))
         );
@@ -124,6 +125,13 @@ async def init_db():
         INSERT OR IGNORE INTO config (key, value) VALUES ('password', '123456');
     """)
     await db.commit()
+
+    # Migration: add stop_on_failure column (v1.4+)
+    try:
+        await db.execute("ALTER TABLE scripts ADD COLUMN stop_on_failure INTEGER DEFAULT 0")
+        await db.commit()
+    except Exception:
+        pass  # column already exists
 
     # Migration: add template_path2 column if it doesn't exist (v1.1+)
     try:

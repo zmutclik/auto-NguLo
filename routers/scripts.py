@@ -53,9 +53,10 @@ async def get_script(script_id: int):
 async def create_script(data: ScriptCreate):
     db = await get_db()
     cursor = await db.execute(
-        """INSERT INTO scripts (name, description, repeat_count, delay_between_ms)
-           VALUES (?, ?, ?, ?)""",
-        (data.name, data.description, data.repeat_count, data.delay_between_ms)
+        """INSERT INTO scripts (name, description, repeat_count, delay_between_ms, stop_on_failure)
+           VALUES (?, ?, ?, ?, ?)""",
+        (data.name, data.description, data.repeat_count, data.delay_between_ms,
+         int(data.stop_on_failure))
     )
     await db.commit()
     return await _get_script_or_404(cursor.lastrowid)
@@ -74,6 +75,8 @@ async def update_script(script_id: int, data: ScriptUpdate):
         updates["repeat_count"] = data.repeat_count
     if data.delay_between_ms is not None:
         updates["delay_between_ms"] = data.delay_between_ms
+    if data.stop_on_failure is not None:
+        updates["stop_on_failure"] = int(data.stop_on_failure)
     if updates:
         updates["updated_at"] = "datetime('now')"
         set_clause = ", ".join(f"{k}=?" for k in updates.keys() if k != "updated_at")

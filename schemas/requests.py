@@ -22,12 +22,14 @@ class ScriptCreate(BaseModel):
     description: str = ""
     repeat_count: int = Field(default=1, ge=1, le=999)
     delay_between_ms: int = Field(default=1000, ge=0, le=60000)
+    stop_on_failure: bool = False
 
 class ScriptUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
     repeat_count: Optional[int] = Field(None, ge=1, le=999)
     delay_between_ms: Optional[int] = Field(None, ge=0, le=60000)
+    stop_on_failure: Optional[bool] = None
 
 
 # ---- Actions ----

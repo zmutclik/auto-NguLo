@@ -924,10 +924,15 @@ class ScriptExecutor:
                     rw_ = min(int(rw_), sw - rx); rh_ = min(int(rh_), sh - ry)
                     if rw_ <= 0 or rh_ <= 0:
                         raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw_},{rh_}) — not within screen {sw}x{sh}")
+                    # Crop both screen AND template to the match region
+                    # (template was captured from full screen, so same crop applies)
                     screen = screen[ry:ry+rh_, rx:rx+rw_]
+                    if template.shape[0] >= ry + rh_ and template.shape[1] >= rx + rw_:
+                        template = template[ry:ry+rh_, rx:rx+rw_]
+                        th, tw = template.shape[:2]
                     region_offset_x, region_offset_y = rx, ry
                     sh, sw = screen.shape[:2]
-                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_}")
+                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_} (template cropped to {tw}x{th})")
 
                 if tw > sw or th > sh:
                     raise RuntimeError(f"Template ({tw}x{th}) larger than search area ({sw}x{sh})")
@@ -950,6 +955,7 @@ class ScriptExecutor:
 
                 sw, sh = screen_img.size
                 region_offset_x, region_offset_y = 0, 0
+                template_was_cropped = False
 
                 if region is not None:
                     rx, ry, rw_, rh_ = region
@@ -958,17 +964,38 @@ class ScriptExecutor:
                     if rw_ <= 0 or rh_ <= 0:
                         raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw_},{rh_}) — not within screen {sw}x{sh}")
                     screen_img = screen_img.crop((rx, ry, rx + rw_, ry + rh_))
+                    # Crop both screen AND template to the match region
+                    if template_img.size[0] >= rx + rw_ and template_img.size[1] >= ry + rh_:
+                        template_img = template_img.crop((rx, ry, rx + rw_, ry + rh_))
+                        tw, th = template_img.size
+                        template_was_cropped = True
                     region_offset_x, region_offset_y = rx, ry
-                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_}")
+                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_} (template cropped to {tw}x{th})")
 
                 if tw > screen_img.size[0] or th > screen_img.size[1]:
                     raise RuntimeError(f"Template ({tw}x{th}) larger than search area")
 
-                # Save cropped screen for numpy loading (Pillow → numpy array)
+                # Save cropped screen AND cropped template for numpy loading
                 screen_img.save(screen_path)
+                if template_was_cropped:
+                    # Template was cropped — save to temp file so _match_template_numpy reads the cropped version
+                    import tempfile
+                    tmp_tpl = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                    template_img.save(tmp_tpl.name)
+                    template_full_path = tmp_tpl.name
+                    _tmp_tpl_path = template_full_path  # for cleanup
+                else:
+                    _tmp_tpl_path = None
 
                 max_val, mx, my = self._match_template_numpy(screen_path, template_full_path)
                 self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
+
+                # Clean up temp template file
+                if _tmp_tpl_path:
+                    try:
+                        os.unlink(_tmp_tpl_path)
+                    except Exception:
+                        pass
 
                 if max_val >= threshold:
                     cx = region_offset_x + mx + tw / 2.0
@@ -1460,6 +1487,11 @@ class ScriptExecutor:
                 else:
                     fail_count += 1
                     self._log("error", f"❌ [#{idx + 1}] {action_type} [{action_name}]: FAILED — {err_msg}")
+                    # Check if script should stop on any failure
+                    if script.get("stop_on_failure"):
+                        self._log("error", "⏹️ Stopping execution due to failure (stop_on_failure is ON)")
+                        self._stop_requested = True
+                        break
 
                 # ---- Jump logic ----
                 if jump_to:
