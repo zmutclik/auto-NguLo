@@ -26,6 +26,14 @@ try:
 except ImportError:
     _PIL_AVAILABLE = False
 
+# Allow Pillow to load partially truncated/corrupt images (e.g. incomplete ADB pull)
+if _PIL_AVAILABLE:
+    try:
+        from PIL import ImageFile
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+    except ImportError:
+        pass
+
 # Template matching available if we have either OpenCV or (numpy + Pillow)
 _TEMPLATE_MATCH_AVAILABLE = _OPENCV_AVAILABLE or (_NUMPY_AVAILABLE and _PIL_AVAILABLE)
 
@@ -803,6 +811,11 @@ class ScriptExecutor:
         try:
             await _run_adb(*(adb_prefix + ("shell", "screencap", "-p", "/sdcard/angulo_tmp.png")), timeout=10.0)
             await _run_adb(*(adb_prefix + ("pull", "/sdcard/angulo_tmp.png", tmp_path)), timeout=10.0)
+            # Verify the pulled file is valid (not truncated)
+            if os.path.isfile(tmp_path):
+                file_size = os.path.getsize(tmp_path)
+                if file_size < 1024:
+                    raise RuntimeError(f"Screenshot file too small ({file_size} bytes) — likely truncated")
             # Cleanup remote temp
             try:
                 await _run_adb(*(adb_prefix + ("shell", "rm", "/sdcard/angulo_tmp.png")), timeout=3.0)
@@ -910,9 +923,20 @@ class ScriptExecutor:
                 screen = cv2.imread(screen_path)
                 template = cv2.imread(template_full_path)
                 if screen is None:
-                    raise RuntimeError(f"Failed to read screenshot from {screen_path}")
+                    # Try with Pillow if OpenCV can't read (e.g. truncated file)
+                    if _PIL_AVAILABLE:
+                        screen = np.array(Image.open(screen_path).convert('RGB'))[:,:,::-1]  # RGB→BGR
+                        if screen is None or screen.size == 0:
+                            raise RuntimeError(f"Failed to read screenshot from {screen_path}")
+                    else:
+                        raise RuntimeError(f"Failed to read screenshot from {screen_path}")
                 if template is None:
-                    raise RuntimeError(f"Failed to read template from {template_full_path}")
+                    if _PIL_AVAILABLE:
+                        template = np.array(Image.open(template_full_path).convert('RGB'))[:,:,::-1]
+                        if template is None or template.size == 0:
+                            raise RuntimeError(f"Failed to read template from {template_full_path}")
+                    else:
+                        raise RuntimeError(f"Failed to read template from {template_full_path}")
 
                 th, tw = template.shape[:2]
                 sh, sw = screen.shape[:2]
