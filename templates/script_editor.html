@@ -85,7 +85,7 @@
                     <div x-show="a._expanded" x-transition class="border-t border-surface-border bg-slate-900/50 px-4 py-4 animate-slide">
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-slate-400 mb-1">Name <span class="text-slate-500">(lowercase_underscore)</span></label>
-                            <input x-model="a.name" type="text" @input="a.name = a.name.toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'')" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand">
+                            <input x-model="a.name" type="text" @input="a.name = a.name.toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/_+/g,'_')" @blur="a.name = a.name.replace(/^_+|_+$/g,'')" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand">
                         </div>
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-slate-500 mb-2">Action Type</label>
