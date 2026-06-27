@@ -11,6 +11,21 @@
     .action-card:hover { border-color: #6366F1; }
     @keyframes slideDown { from { opacity:0; max-height:0; } to { opacity:1; max-height:500px; } }
     .animate-slide { animation: slideDown 0.3s ease-out; }
+    /* Floating scroll-to-bottom button */
+    .fab-scroll-bottom {
+        position: fixed; bottom: 28px; right: 28px; z-index: 40;
+        width: 48px; height: 48px; border-radius: 50%;
+        background: #6366F1; color: white;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 4px 16px rgba(99,102,241,0.45);
+        cursor: pointer; transition: all 0.25s ease;
+        font-size: 20px; border: none; outline: none;
+    }
+    .fab-scroll-bottom:hover {
+        background: #5558E6; transform: scale(1.1);
+        box-shadow: 0 6px 24px rgba(99,102,241,0.6);
+    }
+    .fab-scroll-bottom:active { transform: scale(0.95); }
 </style>
 {% endblock %}
 {% block content %}
@@ -544,6 +559,11 @@
                 </div>
             </div>
         </div>
+
+        <!-- Floating Scroll-to-Bottom Button -->
+        <button class="fab-scroll-bottom" title="Scroll ke paling bawah" @click="scrollToBottom()">
+            ⬇
+        </button>
     </div>
 </div>
 
@@ -951,6 +971,15 @@
                         this.actions.splice(evt.newIndex, 0, item);
                     }
                 });
+            },
+            scrollToBottom() {
+                // Scroll to the bottom of the page (last action or save button area)
+                const actionsList = document.getElementById('actions-list');
+                if (actionsList) {
+                    actionsList.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                } else {
+                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+                }
             }
         };
     }
