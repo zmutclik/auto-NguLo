@@ -77,7 +77,7 @@
                         <span class="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400 font-mono shrink-0" x-text="idx+1"></span>
                         <span x-text="typeIcon(a.action_type)" class="text-lg"></span>
                         <div class="flex-1 min-w-0">
-                            <span class="text-sm font-medium text-slate-200" x-text="a.action_type + ' [' + a.name + ']'"></span>
+                            <span class="text-sm font-medium text-slate-200" x-text="a.name"></span>
                         </div>
                         <svg :class="a._expanded ? 'rotate-180' : ''" class="w-4 h-4 text-slate-500 transition-transform shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                     </div>
