@@ -505,6 +505,35 @@
                             </div>
                         </div>
 
+                        <!-- Read SMS -->
+                        <div x-show="a.action_type === 'read_sms'" class="space-y-3 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📩 Save to Variable</label>
+                                <input x-model="a.var_name" type="text" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="last_sms">
+                                <p class="text-xs text-slate-600 mt-1">Hasil SMS disimpan sebagai JSON string ke variabel ini</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">SMS Type</label>
+                                <select x-model="a.sms_type" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    <option value="inbox">📥 Inbox (SMS masuk)</option>
+                                    <option value="sent">📤 Sent (SMS keluar)</option>
+                                    <option value="draft">📝 Draft</option>
+                                    <option value="all">📂 All (semua)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">Limit (berapa SMS terakhir)</label>
+                                <input x-model.number="a.sms_limit" type="number" min="1" max="50" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="1">
+                                <p class="text-xs text-slate-600 mt-1">Jumlah SMS terakhir yang diambil (default: 1)</p>
+                            </div>
+                            <div class="bg-brand/10 border border-brand/20 rounded-xl p-4">
+                                <p class="text-sm text-brand font-medium">📩 Read SMS via ADB</p>
+                                <p class="text-xs text-slate-400 mt-1">Membaca SMS terakhir dari device lewat <code class="text-slate-300">content://sms</code> provider.</p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Hasil JSON: <code class="text-slate-300">{"count": N, "messages": [{"address":..., "body":..., "date":...}]}</code></p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Akses field: <code class="text-slate-300">\${last_sms.messages.0.body}</code></p>
+                            </div>
+                        </div>
+
                         <!-- Common -->
                         <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-700/50">
                             <div><label class="text-xs text-slate-500">Wait Before (ms)</label><input x-model.number="a.wait_before_ms" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
@@ -578,8 +607,8 @@
             _counter: 100,
             // Device resolution (fetched from /api/device/info); defaults to 1080x1920
             deviceResolution: { w: 1080, h: 1920 },
-            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app'],
-            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝','jump':'🔀','stop':'⏹️','if':'🔀','orientation':'📱','launch_app':'🚀','kill_app':'🔪'}[t]||'❓'; },
+            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app','read_sms'],
+            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝','jump':'🔀','stop':'⏹️','if':'🔀','orientation':'📱','launch_app':'🚀','kill_app':'🔪','read_sms':'📩'}[t]||'❓'; },
 
             // ---- Match region drag on template image ----
             matchRegionRectStyle(a) {
@@ -794,6 +823,7 @@
                     condition_var:'', condition_op:'eq', condition_value:'', jump_on_true:'', jump_on_false:'',
                     orientation_value:'auto',
                     app_package:'',
+                    sms_type:'inbox', sms_limit:1,
                     // coordinate picker state
                     _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
                     _pickPctX: null, _pickPctY: null, _swiping: false,
@@ -844,6 +874,7 @@
                         jump_on_true: a.jump_on_true || '', jump_on_false: a.jump_on_false || '',
                         orientation_value: a.orientation_value || 'auto',
                         app_package: a.app_package || '',
+                        sms_type: a.sms_type || 'inbox', sms_limit: a.sms_limit || 1,
                         use_match_result: !!a.use_match_result,
                         wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,
                         wait_after_ms: a.wait_after_ms,
