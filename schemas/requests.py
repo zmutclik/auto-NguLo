@@ -35,7 +35,7 @@ class ScriptUpdate(BaseModel):
 # ---- Actions ----
 class ActionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
-    action_type: str = Field(..., pattern=r"^(tap|swipe|long_press|screenshot_match|wait|push_key|combo|fetch_api|variable|type_text|jump|stop|if|orientation|launch_app|kill_app)$")
+    action_type: str = Field(..., pattern=r"^(tap|swipe|long_press|screenshot_match|wait|push_key|combo|fetch_api|variable|type_text|jump|stop|if|orientation|launch_app|kill_app|read_sms)$")
     # coords
     x: Optional[float] = None
     y: Optional[float] = None

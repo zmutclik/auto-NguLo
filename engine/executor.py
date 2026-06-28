@@ -1280,6 +1280,82 @@ class ScriptExecutor:
                           timeout=10.0)
             await asyncio.sleep(0.3)
 
+    async def _read_latest_sms(self, save_var: str = "last_sms", sms_type: str = "inbox", sms_limit: int = 1):
+        """Read latest SMS from device via ADB content provider.
+        Saves result as JSON string to self.variables[save_var].
+        JSON structure: {"count": N, "messages": [{"address": ..., "body": ..., "date": ...}, ...]}
+        """
+        if self.mock_mode:
+            dummy = json.dumps({
+                "count": 1,
+                "messages": [{
+                    "address": "08123456789",
+                    "body": "[mock] Ini SMS terakhir untuk testing",
+                    "date": str(int(time.time() * 1000)),
+                }]
+            }, ensure_ascii=False)
+            self.variables[save_var] = dummy
+            self._log("info", f"  📩 [mock] SMS saved to ${save_var}")
+            return
+
+        self._log("info", f"  📩 Reading latest SMS ({sms_type}, limit={sms_limit})...")
+
+        # Map sms_type → content URI
+        uri_map = {
+            "inbox": "content://sms/inbox",
+            "sent": "content://sms/sent",
+            "draft": "content://sms/draft",
+            "all": "content://sms",
+        }
+        uri = uri_map.get(sms_type, "content://sms/inbox")
+
+        try:
+            raw = await _run_adb(
+                *self._adb_args(
+                    "shell", "content", "query",
+                    "--uri", uri,
+                    "--projection", "address,body,date",
+                    "--sort", "date DESC",
+                    "--limit", str(sms_limit),
+                ),
+                timeout=10.0,
+            )
+
+            # Parse content query output:
+            # Row: 0 address=08123..., body=Halo..., date=1234567890
+            messages = []
+            if raw:
+                for row_line in raw.split("\n"):
+                    row_line = row_line.strip()
+                    if not row_line or not row_line.startswith("Row:"):
+                        continue
+                    msg = {}
+                    # Remove "Row: N " prefix then split on ", "
+                    body_part = row_line.split(" ", 2)[-1] if len(row_line.split(" ", 2)) > 2 else row_line
+                    for part in body_part.split(", "):
+                        part = part.strip()
+                        if "=" in part:
+                            key, val = part.split("=", 1)
+                            key = key.strip()
+                            msg[key] = val
+                    if msg:
+                        messages.append(msg)
+
+            result = json.dumps({
+                "count": len(messages),
+                "messages": messages,
+            }, ensure_ascii=False)
+
+            self.variables[save_var] = result
+            preview = messages[0].get("body", "")[:60] if messages else "(kosong)"
+            self._log("success", f"  📩 SMS saved to ${save_var}: {len(messages)} message(s) — {preview}")
+
+        except RuntimeError as e:
+            self._log("error", f"  ❌ Failed to read SMS: {e}")
+            # Save empty result so downstream actions don't crash on missing variable
+            self.variables[save_var] = json.dumps({"count": 0, "messages": [], "error": str(e)})
+            raise
+
     async def _resolve_jump(self, jump_to: str, actions: list) -> int | None:
         """Resolve a jump target name to action index. Shared helper for all action types."""
         if not jump_to:
@@ -1492,6 +1568,13 @@ class ScriptExecutor:
 
                     elif action_type == "kill_app":
                         await self._kill_app(action.get("app_package", ""))
+
+                    elif action_type == "read_sms":
+                        await self._read_latest_sms(
+                            save_var=action.get("var_name", "last_sms"),
+                            sms_type=action.get("sms_type", "inbox"),
+                            sms_limit=int(action.get("sms_limit", "1")),
+                        )
 
                     else:
                         self._log("warn", f"  unknown action type: {action_type}")
