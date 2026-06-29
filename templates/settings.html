@@ -234,8 +234,8 @@
     <h2 class="font-semibold flex items-center gap-2 mb-4"><span class="w-8 h-8 rounded-lg bg-danger/10 flex items-center justify-center text-danger">⚠️</span> Danger Zone</h2>
     <div class="space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-800/50 rounded-xl p-4"><div><p class="font-medium text-slate-200 text-sm">Delete All Scripts</p><p class="text-xs text-slate-500">Hapus semua script secara permanen</p></div><button onclick="if(confirm('Yakin hapus SEMUA script?')) fetch('/api/scripts').then(r=>r.json()).then(scripts=>scripts.forEach(s=>fetch('/api/scripts/'+s.id,{method:'DELETE'}))).then(()=>location.reload())" class="text-danger hover:bg-danger/10 border border-danger/30 rounded-lg px-4 py-2 text-sm font-medium transition-colors shrink-0 self-start sm:self-center">🗑️ Delete All</button></div>
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-800/50 rounded-xl p-4"><div><p class="font-medium text-slate-200 text-sm">Export All Scripts</p><p class="text-xs text-slate-500">Download semua script sebagai JSON</p></div><button onclick="fetch('/api/scripts/export').then(r=>r.json()).then(d=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));a.download='scripts.json';a.click()})" class="text-slate-300 hover:bg-slate-700 border border-surface-border rounded-lg px-4 py-2 text-sm font-medium transition-colors shrink-0 self-start sm:self-center">📤 Download JSON</button></div>
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-800/50 rounded-xl p-4"><div><p class="font-medium text-slate-200 text-sm">Import Scripts</p><p class="text-xs text-slate-500">Upload file JSON</p></div><button onclick="alert('Import via API: POST /api/scripts/import')" class="text-slate-300 hover:bg-slate-700 border border-surface-border rounded-lg px-4 py-2 text-sm font-medium transition-colors shrink-0 self-start sm:self-center">📥 Choose File</button></div>
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-800/50 rounded-xl p-4"><div><p class="font-medium text-slate-200 text-sm">Export All Scripts</p><p class="text-xs text-slate-500">Download semua script sebagai JSON</p></div><button onclick="fetch('/api/scripts/export').then(r=>r.json()).then(d=>{const a=document.createElement('a');const u='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(d,null,2));a.setAttribute('href',u);a.setAttribute('download','scripts.json');a.click()})" class="text-slate-300 hover:bg-slate-700 border border-surface-border rounded-lg px-4 py-2 text-sm font-medium transition-colors shrink-0 self-start sm:self-center">📤 Download JSON</button></div>
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-800/50 rounded-xl p-4" x-data="importScripts()"><div><p class="font-medium text-slate-200 text-sm">Import Scripts</p><p class="text-xs text-slate-500">Upload file JSON</p></div><div class="flex items-center gap-3"><input type="file" accept=".json,application/json" @change="handleFile($event)" class="hidden" x-ref="fileInput"><button @click="$refs.fileInput.click()" :disabled="loading" class="text-slate-300 hover:bg-slate-700 border border-surface-border rounded-lg px-4 py-2 text-sm font-medium transition-colors shrink-0 self-start sm:self-center disabled:opacity-50 disabled:cursor-wait"><span x-show="!loading">📥 Choose File</span><span x-show="loading">⏳ Importing...</span></button></div><div x-show="msg" x-transition :class="ok ? 'bg-success/10 border-success/30 text-success' : 'bg-red-500/10 border-red-500/30 text-red-400'" class="rounded-lg px-4 py-3 text-sm border col-span-full" x-text="msg"></div></div>
     </div>
 </div>
 
@@ -356,6 +356,40 @@
                     setTimeout(() => this.disconnectAllMsg = '', 3000);
                 } catch (e) {
                     this.disconnectAllMsg = 'Failed to disconnect all.';
+                }
+            }
+        };
+    }
+
+    function importScripts() {
+        return {
+            loading: false,
+            msg: '',
+            ok: false,
+            async handleFile(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                this.loading = true;
+                this.msg = '';
+                try {
+                    const text = await file.text();
+                    const data = JSON.parse(text);
+                    const res = await fetch('/api/scripts/import', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    const result = await res.json();
+                    this.ok = res.ok;
+                    this.msg = res.ok
+                        ? `✅ Berhasil import ${result.imported || result.count || '?'} script!`
+                        : (result.detail || result.message || 'Import gagal');
+                } catch (err) {
+                    this.ok = false;
+                    this.msg = err.message.includes('JSON') ? '❌ File bukan JSON yang valid' : `❌ Gagal: ${err.message}`;
+                } finally {
+                    this.loading = false;
+                    e.target.value = '';
                 }
             }
         };
