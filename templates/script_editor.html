@@ -534,6 +534,61 @@
                             </div>
                         </div>
 
+                        <!-- Call Script -->
+                        <div x-show="a.action_type === 'call_script'" class="space-y-3 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📞 Target Script ID</label>
+                                <div class="flex items-center gap-2">
+                                    <input x-model.number="a.call_script_id" type="number" min="1" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Script ID...">
+                                </div>
+                                <p class="text-xs text-slate-600 mt-1">Panggil script lain & tunggu sampai selesai, lalu lanjutkan script ini.</p>
+                            </div>
+                            <div class="bg-info/10 border border-info/20 rounded-xl p-4">
+                                <p class="text-sm text-info font-medium">📞 Call Script Lain</p>
+                                <p class="text-xs text-slate-400 mt-1">Menjalankan script lain sebagai sub-rutin.</p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Variabel <b>dibagikan</b> antara script pemanggil & yang dipanggil.</p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Jika script yang dipanggil gagal, action ini dianggap gagal.</p>
+                            </div>
+                        </div>
+
+                        <!-- Goto Script -->
+                        <div x-show="a.action_type === 'goto_script'" class="space-y-3 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">🔁 Target Script ID</label>
+                                <div class="flex items-center gap-2">
+                                    <input x-model.number="a.goto_script_id" type="number" min="1" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Script ID...">
+                                </div>
+                                <p class="text-xs text-slate-600 mt-1">Pindahkan seluruh eksekusi ke script lain. Script ini berhenti, script target mulai.</p>
+                            </div>
+                            <div class="bg-warning/10 border border-warning/20 rounded-xl p-4">
+                                <p class="text-sm text-warning font-medium">🔁 Pindah Script Lain</p>
+                                <p class="text-xs text-slate-400 mt-1">Menghentikan script ini & memulai script target.</p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Variabel <b>diteruskan</b> ke script target.</p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Eksekusi tidak kembali ke script ini.</p>
+                            </div>
+                        </div>
+
+                        <!-- Toast -->
+                        <div x-show="a.action_type === 'toast'" class="space-y-3 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">💬 Toast Message</label>
+                                <textarea x-model="a.toast_message" rows="2" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand resize-none" placeholder="Hello World! atau \${var_name}"></textarea>
+                                <p class="text-xs text-slate-600 mt-1">Gunakan <code class="text-slate-400">\${var_name}</code> untuk menampilkan isi variable</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">⏱️ Duration</label>
+                                <select x-model="a.toast_duration" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                                    <option value="short">Short (~2 detik)</option>
+                                    <option value="long">Long (~3.5 detik)</option>
+                                </select>
+                            </div>
+                            <div class="bg-brand/10 border border-brand/20 rounded-xl p-4">
+                                <p class="text-sm text-brand font-medium">💬 Tampilkan Toast</p>
+                                <p class="text-xs text-slate-400 mt-1">Menampilkan pesan toast di layar device lewat ADB broadcast/system notification.</p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Berguna untuk debug / info ke user</p>
+                            </div>
+                        </div>
+
                         <!-- Common -->
                         <div class="grid grid-cols-2 gap-2 pt-3 border-t border-slate-700/50">
                             <div><label class="text-xs text-slate-500">Wait Before (ms)</label><input x-model.number="a.wait_before_ms" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
@@ -555,6 +610,7 @@
         </div>
 
         <div x-show="actions.length > 0" class="flex justify-end pt-2">
+            <button @click="addAction()" class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-sm font-semibold rounded-lg mx-2 px-2 py-2.5 transition-colors shadow-sm shadow-success/20">＋ Add Action</button> 
             <button @click="save()" class="bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 text-sm">💾 <span x-text="isNew ? 'Create Script' : 'Save All Changes'"></span></button>
         </div>
 
@@ -607,8 +663,8 @@
             _counter: 100,
             // Device resolution (fetched from /api/device/info); defaults to 1080x1920
             deviceResolution: { w: 1080, h: 1920 },
-            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app','read_sms'],
-            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝','jump':'🔀','stop':'⏹️','if':'🔀','orientation':'📱','launch_app':'🚀','kill_app':'🔪','read_sms':'📩'}[t]||'❓'; },
+            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app','read_sms','call_script','goto_script','toast'],
+            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝','jump':'🔀','stop':'⏹️','if':'🔀','orientation':'📱','launch_app':'🚀','kill_app':'🔪','read_sms':'📩','call_script':'📞','goto_script':'🔁','toast':'💬'}[t]||'❓'; },
 
             // ---- Match region drag on template image ----
             matchRegionRectStyle(a) {
@@ -813,6 +869,10 @@
                         window.location.href = '/dashboard';
                         return;
                     }
+                        alert('⚠️ Gagal memuat script: ' + e.message);
+                        window.location.href = '/dashboard';
+                        return;
+                    }
                 }
                 this.$nextTick(() => this.initSortable());
             },
@@ -824,6 +884,8 @@
                     orientation_value:'auto',
                     app_package:'',
                     sms_type:'inbox', sms_limit:1,
+                    call_script_id:null, goto_script_id:null,
+                    toast_message:'', toast_duration:'short',
                     // coordinate picker state
                     _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
                     _pickPctX: null, _pickPctY: null, _swiping: false,
@@ -875,6 +937,8 @@
                         orientation_value: a.orientation_value || 'auto',
                         app_package: a.app_package || '',
                         sms_type: a.sms_type || 'inbox', sms_limit: a.sms_limit || 1,
+                        call_script_id: a.call_script_id || null, goto_script_id: a.goto_script_id || null,
+                        toast_message: a.toast_message || '', toast_duration: a.toast_duration || 'short',
                         use_match_result: !!a.use_match_result,
                         wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,
                         wait_after_ms: a.wait_after_ms,

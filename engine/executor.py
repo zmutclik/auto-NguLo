@@ -591,6 +591,9 @@ class ScriptExecutor:
     - orientation: change device orientation (portrait/landscape/auto)
     - launch_app: launch an Android app by package name
     - kill_app: force-stop an Android app by package name
+    - call_script: call another script, wait for it to finish, then continue
+    - goto_script: transfer execution to another script (stop current, start target)
+    - toast: show a toast message on the device screen
     """
 
     def __init__(self, mock_mode: bool = True):
@@ -598,6 +601,7 @@ class ScriptExecutor:
         self.variables: dict[str, str] = {}
         self.last_match_result: tuple[float, float] | None = None
         self.log_callback: Optional[Callable] = None
+        self.script_loader: Optional[Callable] = None  # async (script_id) -> script_dict
         self._stop_requested = False
         self._current_action_idx = 0
         self._serial: str | None = None  # ADB device serial
@@ -1267,6 +1271,69 @@ class ScriptExecutor:
                           timeout=10.0)
             await asyncio.sleep(1.0)  # wait for app to start
 
+    async def _toast(self, message: str, duration: str = "short"):
+        """Show a toast message on the device via ADB.
+        Tries multiple methods for cross-device compatibility."""
+        resolved_msg = self._resolve_value(message)
+        dur_param = "1" if duration == "long" else "0"  # 0=short, 1=long
+        if self.mock_mode:
+            self._log("info", f"  [mock] toast ({duration}): {resolved_msg}")
+            await asyncio.sleep(0.1)
+            return
+
+        self._log("info", f"  💬 toast ({duration}): {resolved_msg}")
+        escaped = resolved_msg.replace("'", "\\'")
+        adb_prefix = ("-s", self._serial) if self._serial else ()
+
+        # Strategy 1: broadcast to SystemUI (works on AOSP-based ROMs, Android 8+)
+        try:
+            await _run_adb(*(adb_prefix + (
+                "shell", "am", "broadcast",
+                "-a", "com.android.systemui.action.show_toast",
+                "--es", "android.intent.extra.TEXT", escaped,
+                "--ei", "android.intent.extra.DURATION", dur_param,
+            )), timeout=4.0)
+            await asyncio.sleep(0.15)
+            return
+        except RuntimeError:
+            pass
+
+        # Strategy 2: Try Termux:API toast (if Termux is installed on device)
+        try:
+            await _run_adb(*(adb_prefix + (
+                "shell", "am", "broadcast",
+                "-n", "com.termux.api/.ToastReceiver",
+                "--es", "text", escaped,
+                "--ez", "long", "true" if duration == "long" else "false",
+            )), timeout=4.0)
+            await asyncio.sleep(0.15)
+            return
+        except RuntimeError:
+            pass
+
+        # Strategy 3: Post a system notification that looks like a toast (Android 8+)
+        try:
+            await _run_adb(*(adb_prefix + (
+                "shell", "cmd", "notification", "post",
+                "-S", "bigtext",
+                "-t", "Auto-NguLo",
+                "toast", resolved_msg,
+            )), timeout=4.0)
+            # Remove it after a short time so it doesn't clutter
+            await asyncio.sleep(1.5 if duration == "short" else 3.5)
+            try:
+                await _run_adb(*(adb_prefix + (
+                    "shell", "cmd", "notification", "cancel", "toast",
+                )), timeout=3.0)
+            except RuntimeError:
+                pass
+            return
+        except RuntimeError:
+            pass
+
+        # Strategy 4: Log only (no working toast method found)
+        self._log("warn", f"  ⚠️  Toast not supported on this device (logged only): {resolved_msg}")
+
     async def _kill_app(self, package: str):
         """Kill/force-stop an Android app by package name via ADB."""
         resolved = self._resolve_value(package)
@@ -1356,6 +1423,256 @@ class ScriptExecutor:
             self.variables[save_var] = json.dumps({"count": 0, "messages": [], "error": str(e)})
             raise
 
+    # ---- call_script / goto_script ----
+
+    async def _call_script(self, target_script_id: int) -> bool:
+        """
+        Load and execute another script inline. Waits for it to complete.
+        Returns True if the target script succeeded, False if it failed/stopped.
+        Variables are shared with the parent script.
+        """
+        if not self.script_loader:
+            self._log("error", "  ❌ script_loader not set — cannot call another script")
+            return False
+
+        try:
+            target_script = await self.script_loader(target_script_id)
+        except Exception as e:
+            self._log("error", f"  ❌ Failed to load script #{target_script_id}: {e}")
+            return False
+
+        if not target_script or not target_script.get("actions"):
+            self._log("error", f"  ❌ Script #{target_script_id} not found or has no actions")
+            return False
+
+        target_name = target_script.get("name", f"script_{target_script_id}")
+        actions = target_script["actions"]
+        self._log("info", f"  📞 Calling script [{target_name}] (#{target_script_id}) with {len(actions)} action(s)...")
+
+        # Save current state
+        saved_stop = self._stop_requested
+        self._stop_requested = False
+
+        idx = 0
+        while idx < len(actions):
+            if self._stop_requested:
+                self._log("info", f"  ⏹️ Called script [{target_name}] stopped")
+                self._stop_requested = saved_stop  # restore parent stop state
+                return False
+
+            action = actions[idx]
+            action_name = action.get("name", f"action_{idx}")
+            action_type = action.get("action_type", "wait")
+
+            self._log("info", f"  📞 [{target_name}] ⚡ [#{idx + 1}] {action_type} [{action_name}]")
+
+            # Wait before
+            wait_before = action.get("wait_before_ms", 500) / 1000
+            if wait_before > 0:
+                await asyncio.sleep(wait_before)
+
+            jump_to = None
+            ok = True
+            err_msg = ""
+
+            try:
+                ok, jump_to, err_msg = await self._execute_single_action(action, actions)
+            except Exception as e:
+                ok = False
+                err_msg = str(e)
+
+            # Wait after
+            wait_after = action.get("wait_after_ms", 500) / 1000
+            if wait_after > 0:
+                await asyncio.sleep(wait_after)
+
+            if ok:
+                self._log("success", f"  📞 [{target_name}] ✅ [#{idx + 1}] {action_type} [{action_name}]")
+            else:
+                self._log("error", f"  📞 [{target_name}] ❌ [#{idx + 1}] {action_type} [{action_name}]: {err_msg}")
+                if target_script.get("stop_on_failure"):
+                    self._stop_requested = saved_stop
+                    return False
+
+            # Handle jumps
+            if jump_to:
+                target_idx = await self._resolve_jump(jump_to, actions)
+                if target_idx is not None:
+                    idx = target_idx
+                    continue
+                elif not ok:
+                    self._stop_requested = saved_stop
+                    return False
+
+            idx += 1
+
+        self._log("success", f"  📞 Called script [{target_name}] completed successfully")
+        self._stop_requested = saved_stop
+        return True
+
+    async def _execute_single_action(self, action: dict, actions: list) -> tuple:
+        """
+        Execute a single action. Used by both main loop and _call_script.
+        Returns (ok: bool, jump_to: str | None, err_msg: str).
+        """
+        action_type = action.get("action_type", "wait")
+        jump_to = None
+        ok = True
+        err_msg = ""
+
+        try:
+            if action_type == "tap":
+                if action.get("use_match_result") and self.last_match_result:
+                    await self._tap(*self.last_match_result)
+                elif action.get("template_path") and action.get("x") is None and action.get("y") is None:
+                    coords = await self._resolve_coords_from_template(action)
+                    await self._tap(coords[0], coords[1])
+                else:
+                    await self._tap(action.get("x", 0), action.get("y", 0))
+
+            elif action_type == "swipe":
+                if action.get("template_path") and action.get("x") is None and action.get("y") is None:
+                    coords = await self._resolve_coords_from_template(action)
+                    await self._swipe(coords[0], coords[1], coords[2], coords[3], action.get("duration_ms", 300))
+                else:
+                    await self._swipe(action.get("x", 0), action.get("y", 0), action.get("x2", 0), action.get("y2", 0), action.get("duration_ms", 300))
+
+            elif action_type == "long_press":
+                if action.get("template_path") and action.get("x") is None and action.get("y") is None:
+                    coords = await self._resolve_coords_from_template(action)
+                    await self._long_press(coords[0], coords[1], action.get("duration_ms", 500))
+                else:
+                    await self._long_press(action.get("x", 0), action.get("y", 0), action.get("duration_ms", 500))
+
+            elif action_type == "screenshot_match":
+                match_region = None
+                rx = action.get("match_region_x")
+                ry = action.get("match_region_y")
+                rw = action.get("match_region_w")
+                rh = action.get("match_region_h")
+                if rx is not None and ry is not None and rw is not None and rh is not None:
+                    match_region = (rx, ry, rw, rh)
+                found, mx, my = await self._screenshot_match(
+                    action.get("template_path", ""),
+                    action.get("match_threshold", 0.80),
+                    action.get("retry_count", 1),
+                    action.get("retry_delay_ms", 1000),
+                    match_region,
+                )
+                if found:
+                    jump_to = action.get("jump_on_success", "")
+                else:
+                    ok = False
+                    err_msg = "Template not found after retries"
+                    jump_to = action.get("jump_on_fail", "")
+
+            elif action_type == "wait":
+                wait_ms = action.get("wait_ms", 1000)
+                await asyncio.sleep(wait_ms / 1000)
+
+            elif action_type == "push_key":
+                await self._push_key(action.get("key_code", "HOME"))
+
+            elif action_type == "combo":
+                await self._combo_action(action.get("combo_action", "select_all"))
+
+            elif action_type == "fetch_api":
+                result = await self._fetch_api(
+                    action.get("api_url", ""),
+                    action.get("api_method", "GET"),
+                    action.get("api_headers", "{}"),
+                    action.get("api_body", ""),
+                )
+                save_var = action.get("api_save_to_var", "")
+                if save_var:
+                    self.variables[save_var] = result
+                    self._log("info", f"  saved response to ${save_var} ({len(result)} bytes)")
+
+            elif action_type == "variable":
+                vname = action.get("var_name", "")
+                vop = action.get("var_operation", "set")
+                vval = self._resolve_value(action.get("var_value", ""))
+                if vop == "set":
+                    self.variables[vname] = vval
+                    self._log("info", f"  set ${vname} = {vval}")
+                elif vop == "update":
+                    self.variables[vname] = vval
+                    self._log("info", f"  update ${vname} = {vval}")
+                elif vop == "get":
+                    val = self.variables.get(vname, "")
+                    self._log("info", f"  get ${vname} = {val}")
+
+            elif action_type == "type_text":
+                await self._type_text(
+                    action.get("text_content", ""),
+                    action.get("text_speed_ms", 50),
+                )
+
+            elif action_type == "jump":
+                jump_to = action.get("jump_to", "")
+                if not jump_to:
+                    self._log("warn", f"  jump action without target, skipping")
+
+            elif action_type == "stop":
+                self._stop_requested = True
+
+            elif action_type == "if":
+                jump_target, result = await self._if_condition(action)
+                self._log("info", f"  IF result: {result}, jump_to: {jump_target or '(none)'}")
+                if jump_target:
+                    jump_to = jump_target
+
+            elif action_type == "orientation":
+                await self._orientation(action.get("orientation_value", "auto"))
+
+            elif action_type == "launch_app":
+                await self._launch_app(action.get("app_package", ""))
+
+            elif action_type == "kill_app":
+                await self._kill_app(action.get("app_package", ""))
+
+            elif action_type == "read_sms":
+                await self._read_latest_sms(
+                    save_var=action.get("var_name", "last_sms"),
+                    sms_type=action.get("sms_type", "inbox"),
+                    sms_limit=int(action.get("sms_limit", "1")),
+                )
+
+            elif action_type == "call_script":
+                target_id = action.get("call_script_id")
+                if target_id:
+                    ok = await self._call_script(int(target_id))
+                    if not ok:
+                        err_msg = f"Call script #{target_id} failed"
+                else:
+                    ok = False
+                    err_msg = "call_script_id not set"
+
+            elif action_type == "goto_script":
+                target_id = action.get("goto_script_id")
+                if target_id:
+                    self._log("info", f"  🔀 goto_script: transferring to script #{target_id}")
+                    self._goto_target = int(target_id)  # signal to main loop
+                    self._stop_requested = True
+                else:
+                    ok = False
+                    err_msg = "goto_script_id not set"
+
+            elif action_type == "toast":
+                await self._toast(
+                    action.get("toast_message", ""),
+                    action.get("toast_duration", "short"),
+                )
+
+            else:
+                self._log("warn", f"  unknown action type: {action_type}")
+
+        except Exception as e:
+            ok = False
+            err_msg = str(e)
+
+        return ok, jump_to, err_msg
+
     async def _resolve_jump(self, jump_to: str, actions: list) -> int | None:
         """Resolve a jump target name to action index. Shared helper for all action types."""
         if not jump_to:
@@ -1370,9 +1687,13 @@ class ScriptExecutor:
     async def execute(self, script: dict, log_cb: Callable | None = None) -> dict:
         """
         Execute all actions in a script. Returns summary dict.
+        Supports goto_script: if _goto_target is set, returns a special
+        result dict with _goto_target so the router can restart execution
+        on the target script.
         """
         self.log_callback = log_cb
         self._stop_requested = False
+        self._goto_target = None
         self.variables = {}
         self.last_match_result = None
 
@@ -1418,170 +1739,40 @@ class ScriptExecutor:
                 if wait_before > 0:
                     await asyncio.sleep(wait_before)
 
-                jump_to = None
-                ok = True
-                err_msg = ""
+                ok, jump_to, err_msg = await self._execute_single_action(action, actions)
 
-                try:
-                    if action_type == "tap":
-                        if action.get("use_match_result") and self.last_match_result:
-                            await self._tap(*self.last_match_result)
-                        elif action.get("template_path") and action.get("x") is None and action.get("y") is None:
-                            # No explicit coords → auto-detect via template matching
-                            coords = await self._resolve_coords_from_template(action)
-                            await self._tap(coords[0], coords[1])
-                        else:
-                            await self._tap(action.get("x", 0), action.get("y", 0))
+                # goto_script sets _stop_requested=True and sets _goto_target
+                if self._goto_target is not None:
+                    self._log("info", f"  🔀 goto_script → script #{self._goto_target}")
+                    # We need to break out completely and return the goto target
+                    break
 
-                    elif action_type == "swipe":
-                        if action.get("template_path") and action.get("x") is None and action.get("y") is None:
-                            # No explicit coords → auto-detect via template matching
-                            coords = await self._resolve_coords_from_template(action)
-                            await self._swipe(
-                                coords[0], coords[1], coords[2], coords[3],
-                                action.get("duration_ms", 300),
-                            )
-                        else:
-                            await self._swipe(
-                                action.get("x", 0), action.get("y", 0),
-                                action.get("x2", 0), action.get("y2", 0),
-                                action.get("duration_ms", 300),
-                            )
+                # Handle stop (from stop action or goto_script)
+                if action_type == "stop" or action_type == "goto_script":
+                    # handle stop specially (already set _stop_requested in _execute_single_action)
+                    pass
 
-                    elif action_type == "long_press":
-                        if action.get("template_path") and action.get("x") is None and action.get("y") is None:
-                            # No explicit coords → auto-detect via template matching
-                            coords = await self._resolve_coords_from_template(action)
-                            await self._long_press(coords[0], coords[1],
-                                action.get("duration_ms", 500),
-                            )
-                        else:
-                            await self._long_press(
-                                action.get("x", 0), action.get("y", 0),
-                                action.get("duration_ms", 500),
-                            )
-
-                    elif action_type == "screenshot_match":
-                        # Build region tuple if match region is configured
-                        match_region = None
-                        rx = action.get("match_region_x")
-                        ry = action.get("match_region_y")
-                        rw = action.get("match_region_w")
-                        rh = action.get("match_region_h")
-                        if rx is not None and ry is not None and rw is not None and rh is not None:
-                            match_region = (rx, ry, rw, rh)
-                        found, mx, my = await self._screenshot_match(
-                            action.get("template_path", ""),
-                            action.get("match_threshold", 0.80),
-                            action.get("retry_count", 1),
-                            action.get("retry_delay_ms", 1000),
-                            match_region,
-                        )
-                        if found:
-                            jump_to = action.get("jump_on_success", "")
-                        else:
-                            ok = False
-                            err_msg = "Template not found after retries"
-                            jump_to = action.get("jump_on_fail", "")
-
-                    elif action_type == "wait":
-                        wait_ms = action.get("wait_ms", 1000)
-                        self._log("info", f"  waiting {wait_ms}ms...")
-                        await asyncio.sleep(wait_ms / 1000)
-
-                    elif action_type == "push_key":
-                        await self._push_key(action.get("key_code", "HOME"))
-
-                    elif action_type == "combo":
-                        await self._combo_action(action.get("combo_action", "select_all"))
-
-                    elif action_type == "fetch_api":
-                        result = await self._fetch_api(
-                            action.get("api_url", ""),
-                            action.get("api_method", "GET"),
-                            action.get("api_headers", "{}"),
-                            action.get("api_body", ""),
-                        )
-                        save_var = action.get("api_save_to_var", "")
-                        if save_var:
-                            self.variables[save_var] = result
-                            self._log("info", f"  saved response to ${save_var} ({len(result)} bytes)")
-
-                    elif action_type == "variable":
-                        vname = action.get("var_name", "")
-                        vop = action.get("var_operation", "set")
-                        vval = self._resolve_value(action.get("var_value", ""))
-                        if vop == "set":
-                            self.variables[vname] = vval
-                            self._log("info", f"  set ${vname} = {vval}")
-                        elif vop == "update":
-                            self.variables[vname] = vval
-                            self._log("info", f"  update ${vname} = {vval}")
-                        elif vop == "get":
-                            val = self.variables.get(vname, "")
-                            self._log("info", f"  get ${vname} = {val}")
-
-                    elif action_type == "type_text":
-                        await self._type_text(
-                            action.get("text_content", ""),
-                            action.get("text_speed_ms", 50),
-                        )
-
-                    # ---- New action types ----
-                    elif action_type == "jump":
-                        jump_to = action.get("jump_to", "")
-                        if jump_to:
-                            target_idx = await self._resolve_jump(jump_to, actions)
-                            if target_idx is not None:
-                                idx = target_idx
-                                self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: jumped to [{jump_to}]")
-                                continue
-                            else:
-                                ok = False
-                                err_msg = f"Jump target [{jump_to}] not found"
-                        else:
-                            self._log("warn", f"  jump action without target, skipping")
-
-                    elif action_type == "stop":
-                        self._log("info", f"  ⏹️ stop action: stopping execution")
-                        self._stop_requested = True
-                        ok = True  # stop is intentional, not a failure
-
-                    elif action_type == "if":
-                        jump_target, result = await self._if_condition(action)
-                        self._log("info", f"  IF result: {result}, jump_to: {jump_target or '(none)'}")
-                        if jump_target:
-                            target_idx = await self._resolve_jump(jump_target, actions)
-                            if target_idx is not None:
-                                idx = target_idx
-                                self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: jumped to [{jump_target}]")
-                                continue
-                            else:
-                                ok = False
-                                err_msg = f"IF jump target [{jump_target}] not found"
-
-                    elif action_type == "orientation":
-                        await self._orientation(action.get("orientation_value", "auto"))
-
-                    elif action_type == "launch_app":
-                        await self._launch_app(action.get("app_package", ""))
-
-                    elif action_type == "kill_app":
-                        await self._kill_app(action.get("app_package", ""))
-
-                    elif action_type == "read_sms":
-                        await self._read_latest_sms(
-                            save_var=action.get("var_name", "last_sms"),
-                            sms_type=action.get("sms_type", "inbox"),
-                            sms_limit=int(action.get("sms_limit", "1")),
-                        )
-
+                # Handle jump action (which sets jump_to but needs resolution)
+                if action_type == "jump" and jump_to:
+                    target_idx = await self._resolve_jump(jump_to, actions)
+                    if target_idx is not None:
+                        idx = target_idx
+                        self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: jumped to [{jump_to}]")
+                        continue
                     else:
-                        self._log("warn", f"  unknown action type: {action_type}")
+                        ok = False
+                        err_msg = f"Jump target [{jump_to}] not found"
 
-                except Exception as e:
-                    ok = False
-                    err_msg = str(e)
+                # Handle if action (which sets jump_to)
+                if action_type == "if" and jump_to:
+                    target_idx = await self._resolve_jump(jump_to, actions)
+                    if target_idx is not None:
+                        idx = target_idx
+                        self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: jumped to [{jump_to}]")
+                        continue
+                    else:
+                        ok = False
+                        err_msg = f"IF jump target [{jump_to}] not found"
 
                 # Wait after
                 wait_after = action.get("wait_after_ms", 500) / 1000
@@ -1600,13 +1791,9 @@ class ScriptExecutor:
                         self._stop_requested = True
                         break
 
-                # ---- Jump logic ----
-                if jump_to:
-                    target_idx = None
-                    for i, a in enumerate(actions):
-                        if a.get("name") == jump_to:
-                            target_idx = i
-                            break
+                # ---- Jump logic (from screenshot_match, etc.) ----
+                if jump_to and action_type not in ("jump", "if"):
+                    target_idx = await self._resolve_jump(jump_to, actions)
                     if target_idx is not None:
                         self._log("info", f"  🔀 Jumping to [{jump_to}] (action #{target_idx + 1})")
                         idx = target_idx
@@ -1623,15 +1810,25 @@ class ScriptExecutor:
                 if idx < len(actions) and delay_between > 0:
                     await asyncio.sleep(delay_between)
 
+            # If goto_script was triggered, break the repeat loop
+            if self._goto_target is not None:
+                break
+
         elapsed = time.time() - start_time
         status = "success" if not self._stop_requested else "stopped"
         self._log("info", "──────────────────────────────────────")
         self._log(status, f"✅ Execution {status} in {elapsed:.1f}s — {success_count} success, {fail_count} failed")
 
-        return {
+        result = {
             "status": status,
             "success_count": success_count,
             "fail_count": fail_count,
             "total_actions": total_in_run,
             "duration_sec": round(elapsed, 1),
         }
+
+        # Pass the goto target back to the router if set
+        if self._goto_target is not None:
+            result["_goto_target"] = self._goto_target
+
+        return result

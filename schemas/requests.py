@@ -35,7 +35,7 @@ class ScriptUpdate(BaseModel):
 # ---- Actions ----
 class ActionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
-    action_type: str = Field(..., pattern=r"^(tap|swipe|long_press|screenshot_match|wait|push_key|combo|fetch_api|variable|type_text|jump|stop|if|orientation|launch_app|kill_app|read_sms)$")
+    action_type: str = Field(..., pattern=r"^(tap|swipe|long_press|screenshot_match|wait|push_key|combo|fetch_api|variable|type_text|jump|stop|if|orientation|launch_app|kill_app|read_sms|call_script|goto_script|toast)$")
     # coords
     x: Optional[float] = None
     y: Optional[float] = None
@@ -86,6 +86,12 @@ class ActionCreate(BaseModel):
     orientation_value: str = "auto"
     # launch_app / kill_app
     app_package: str = ""
+    # call_script / goto_script
+    call_script_id: Optional[int] = None
+    goto_script_id: Optional[int] = None
+    # toast
+    toast_message: str = ""
+    toast_duration: str = "short"
     # common
     use_match_result: bool = False
     wait_ms: int = 1000
@@ -138,6 +144,12 @@ class ActionUpdate(BaseModel):
     orientation_value: Optional[str] = None
     # launch_app / kill_app
     app_package: Optional[str] = None
+    # call_script / goto_script
+    call_script_id: Optional[int] = None
+    goto_script_id: Optional[int] = None
+    # toast
+    toast_message: Optional[str] = None
+    toast_duration: Optional[str] = None
     # common
     use_match_result: Optional[bool] = None
     wait_ms: Optional[int] = None

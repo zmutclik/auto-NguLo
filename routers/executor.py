@@ -20,20 +20,30 @@ def _row_to_dict(row) -> dict:
     return dict(row)
 
 
-@router.post("/execute")
-async def execute_script(script_id: int):
-    """Start script execution in background, return log stream endpoint."""
+async def _get_script_dict(script_id: int) -> dict | None:
+    """Load a script with its actions from DB. Returns None if not found."""
     db = await get_db()
     cursor = await db.execute("SELECT * FROM scripts WHERE id=?", (script_id,))
     script_row = await cursor.fetchone()
     if not script_row:
-        raise HTTPException(status_code=404, detail="Script not found")
-
+        return None
     script = _row_to_dict(script_row)
     cursor2 = await db.execute(
         "SELECT * FROM actions WHERE script_id=? ORDER BY order_num", (script_id,)
     )
     script["actions"] = [_row_to_dict(r) for r in await cursor2.fetchall()]
+    return script
+
+
+@router.post("/execute")
+async def execute_script(script_id: int):
+    """Start script execution in background, return log stream endpoint.
+    Supports goto_script chaining: if a goto_script action is encountered,
+    execution transfers to the target script automatically."""
+    db = await get_db()
+    script = await _get_script_dict(script_id)
+    if not script:
+        raise HTTPException(status_code=404, detail="Script not found")
 
     if not script["actions"]:
         raise HTTPException(status_code=400, detail="Script has no actions")
@@ -49,6 +59,13 @@ async def execute_script(script_id: int):
     # Create executor — auto-detect ADB availability
     use_mock = not await adb_available()
     executor = ScriptExecutor(mock_mode=use_mock)
+
+    # Set up script_loader so call_script / goto_script actions can load other scripts
+    async def _load_script(sid: int) -> dict:
+        return await _get_script_dict(sid)
+
+    executor.script_loader = _load_script
+
     _active_executors[log_id] = executor
 
     # Build log array
@@ -58,19 +75,62 @@ async def execute_script(script_id: int):
         t = time.strftime("%H:%M:%S")
         log_entries.append({"time": t, "level": level, "message": message})
 
-    # Run in background task
-    async def run_and_save():
-        result = await executor.execute(script, log_cb)
-        # Update DB
-        await db.execute(
-            "UPDATE execution_logs SET status=?, log_json=?, success_count=?, fail_count=?, duration_sec=?, ended_at=datetime('now') WHERE id=?",
-            (result["status"], json.dumps(log_entries, ensure_ascii=False),
-             result["success_count"], result["fail_count"], result["duration_sec"], log_id)
-        )
-        await db.commit()
+    # Run in background task with goto_script chaining support
+    async def _run_chain():
+        nonlocal executor
+        current_script = script
+        current_log_id = log_id
+        current_logs = log_entries
+        goto_chain = []  # track visited script IDs to prevent infinite loops
+
+        while True:
+            result = await executor.execute(current_script, log_cb)
+
+            # Update the current execution_logs row
+            final_status = result["status"]
+            await db.execute(
+                "UPDATE execution_logs SET status=?, log_json=?, success_count=?, fail_count=?, duration_sec=?, ended_at=datetime('now') WHERE id=?",
+                (final_status, json.dumps(current_logs, ensure_ascii=False),
+                 result["success_count"], result["fail_count"], result["duration_sec"], current_log_id)
+            )
+            await db.commit()
+
+            # Check if we should chain to another script via goto_script
+            goto_target = result.get("_goto_target")
+            if goto_target and goto_target not in goto_chain:
+                goto_chain.append(goto_target)
+                next_script = await _get_script_dict(goto_target)
+                if next_script and next_script.get("actions"):
+                    # Create a new log entry for the target script
+                    new_log_cursor = await db.execute(
+                        "INSERT INTO execution_logs (script_id, script_name, status, total_actions) VALUES (?, ?, 'running', ?)",
+                        (goto_target, next_script["name"], len(next_script["actions"]))
+                    )
+                    new_log_id = new_log_cursor.lastrowid
+                    await db.commit()
+
+                    # Build a new executor for the target script (resets internal state)
+                    new_exec = ScriptExecutor(mock_mode=use_mock)
+                    new_exec.script_loader = executor.script_loader
+                    # Copy variables over so the target script inherits state
+                    new_exec.variables = dict(executor.variables)
+                    new_exec.last_match_result = executor.last_match_result
+                    _active_executors[new_log_id] = new_exec
+                    executor = new_exec
+
+                    # Reset logs for the new script
+                    current_logs.clear()
+                    log_cb("info", f"🔀 Transferred from script #{current_script.get('id')} via goto_script")
+                    current_script = next_script
+                    current_log_id = new_log_id
+                    continue
+                else:
+                    log_cb("error", f"❌ goto_script target #{goto_target} not found or has no actions")
+            break
+
         _active_executors.pop(log_id, None)
 
-    asyncio.create_task(run_and_save())
+    asyncio.create_task(_run_chain())
 
     return {"message": "Execution started", "log_id": log_id, "stream_url": f"/api/scripts/{script_id}/stream/{log_id}"}
 

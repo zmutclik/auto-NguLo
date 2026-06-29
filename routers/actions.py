@@ -59,8 +59,8 @@ async def create_action(script_id: int, data: ActionCreate):
             condition_var, condition_op, condition_value, jump_on_true, jump_on_false,
             orientation_value,
             app_package,
-            use_match_result, wait_ms, wait_before_ms, wait_after_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            call_script_id, goto_script_id,            toast_message, toast_duration,            use_match_result, wait_ms, wait_before_ms, wait_after_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             script_id, order, data.name, data.action_type,
             data.x, data.y, data.x2, data.y2, data.duration_ms,
@@ -75,6 +75,8 @@ async def create_action(script_id: int, data: ActionCreate):
             data.condition_var, data.condition_op, data.condition_value, data.jump_on_true, data.jump_on_false,
             data.orientation_value,
             data.app_package,
+            data.call_script_id, data.goto_script_id,
+            data.toast_message, data.toast_duration,
             int(data.use_match_result), data.wait_ms, data.wait_before_ms, data.wait_after_ms,
         )
     )
@@ -125,6 +127,9 @@ async def update_action(script_id: int, action_id: int, data: ActionUpdate):
         "jump_on_true": data.jump_on_true, "jump_on_false": data.jump_on_false,
         "orientation_value": data.orientation_value,
         "app_package": data.app_package,
+        "call_script_id": data.call_script_id,
+        "goto_script_id": data.goto_script_id,
+        "toast_message": data.toast_message, "toast_duration": data.toast_duration,
         "use_match_result": int(data.use_match_result) if data.use_match_result is not None else None,
         "wait_ms": data.wait_ms, "wait_before_ms": data.wait_before_ms,
         "wait_after_ms": data.wait_after_ms,

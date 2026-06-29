@@ -96,6 +96,12 @@ async def init_db():
             orientation_value TEXT DEFAULT 'auto',
             -- launch_app / kill_app
             app_package     TEXT DEFAULT '',
+            -- call_script / goto_script
+            call_script_id  INTEGER DEFAULT NULL,
+            goto_script_id  INTEGER DEFAULT NULL,
+            -- toast
+            toast_message   TEXT DEFAULT '',
+            toast_duration  TEXT DEFAULT 'short',
             -- common
             use_match_result INTEGER DEFAULT 0,
             wait_ms         INTEGER DEFAULT 1000,
@@ -124,7 +130,18 @@ async def init_db():
         -- Seed default password if not exists
         INSERT OR IGNORE INTO config (key, value) VALUES ('password', '123456');
     """)
+    # ---- Migrations for new columns (safe to run multiple times) ----
+    await _migrate_add_column(db, "actions", "call_script_id", "INTEGER DEFAULT NULL")
+    await _migrate_add_column(db, "actions", "goto_script_id", "INTEGER DEFAULT NULL")
     await db.commit()
+
+
+async def _migrate_add_column(db, table: str, column: str, col_def: str):
+    """Add a column if it doesn't already exist (SQLite doesn't support IF NOT EXISTS for ALTER)."""
+    try:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+    except Exception:
+        pass  # column already exists
 
     # Migration: add stop_on_failure column (v1.4+)
     try:
@@ -171,6 +188,17 @@ async def init_db():
         except Exception:
             pass  # column already exists
 
+
+    # Migration: add toast columns (v1.5+)
+    for col, col_type in [
+        ('toast_message', "TEXT DEFAULT ''"),
+        ('toast_duration', "TEXT DEFAULT 'short'"),
+    ]:
+        try:
+            await db.execute(f"ALTER TABLE actions ADD COLUMN {col} {col_type}")
+            await db.commit()
+        except Exception:
+            pass  # column already exists
 
 async def close_db():
     """Close the database connection."""
