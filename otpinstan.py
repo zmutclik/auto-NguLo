@@ -1,6 +1,6 @@
 import requests, time
 
-API_KEY  = 'otpk_6c24f3c72e99a8ab6b9fafb45f6d4fc22103b97032090936'
+API_KEY  = ''
 BASE_URL = 'https://otpinstan.com/api/reseller'
 HEADERS  = {'X-Api-Key': API_KEY, 'Content-Type': 'application/json'}
 
