@@ -1425,9 +1425,9 @@ class ScriptExecutor:
 
     # ---- call_script / goto_script ----
 
-    async def _call_script(self, target_script_id: int) -> bool:
+    async def _call_script(self, target_script_name: str) -> bool:
         """
-        Load and execute another script inline. Waits for it to complete.
+        Load and execute another script inline by name. Waits for it to complete.
         Returns True if the target script succeeded, False if it failed/stopped.
         Variables are shared with the parent script.
         """
@@ -1436,18 +1436,18 @@ class ScriptExecutor:
             return False
 
         try:
-            target_script = await self.script_loader(target_script_id)
+            target_script = await self.script_loader(target_script_name)
         except Exception as e:
-            self._log("error", f"  ❌ Failed to load script #{target_script_id}: {e}")
+            self._log("error", f"  ❌ Failed to load script [{target_script_name}]: {e}")
             return False
 
         if not target_script or not target_script.get("actions"):
-            self._log("error", f"  ❌ Script #{target_script_id} not found or has no actions")
+            self._log("error", f"  ❌ Script [{target_script_name}] not found or has no actions")
             return False
 
-        target_name = target_script.get("name", f"script_{target_script_id}")
+        target_name = target_script.get("name", target_script_name)
         actions = target_script["actions"]
-        self._log("info", f"  📞 Calling script [{target_name}] (#{target_script_id}) with {len(actions)} action(s)...")
+        self._log("info", f"  📞 Calling script [{target_name}] with {len(actions)} action(s)...")
 
         # Save current state
         saved_stop = self._stop_requested
@@ -1639,24 +1639,24 @@ class ScriptExecutor:
                 )
 
             elif action_type == "call_script":
-                target_id = action.get("call_script_id")
-                if target_id:
-                    ok = await self._call_script(int(target_id))
+                target_name = action.get("call_script_name", "").strip()
+                if target_name:
+                    ok = await self._call_script(target_name)
                     if not ok:
-                        err_msg = f"Call script #{target_id} failed"
+                        err_msg = f"Call script [{target_name}] failed"
                 else:
                     ok = False
-                    err_msg = "call_script_id not set"
+                    err_msg = "call_script_name not set"
 
             elif action_type == "goto_script":
-                target_id = action.get("goto_script_id")
-                if target_id:
-                    self._log("info", f"  🔀 goto_script: transferring to script #{target_id}")
-                    self._goto_target = int(target_id)  # signal to main loop
+                target_name = action.get("goto_script_name", "").strip()
+                if target_name:
+                    self._log("info", f"  🔀 goto_script: transferring to script [{target_name}]")
+                    self._goto_target = target_name  # signal to main loop (now a name string)
                     self._stop_requested = True
                 else:
                     ok = False
-                    err_msg = "goto_script_id not set"
+                    err_msg = "goto_script_name not set"
 
             elif action_type == "toast":
                 await self._toast(
@@ -1743,7 +1743,9 @@ class ScriptExecutor:
 
                 # goto_script sets _stop_requested=True and sets _goto_target
                 if self._goto_target is not None:
-                    self._log("info", f"  🔀 goto_script → script #{self._goto_target}")
+                    self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: SUCCESS")
+                    success_count += 1
+                    self._log("info", f"  🔀 goto_script → [{self._goto_target}]")
                     # We need to break out completely and return the goto target
                     break
 
@@ -1785,11 +1787,6 @@ class ScriptExecutor:
                 else:
                     fail_count += 1
                     self._log("error", f"❌ [#{idx + 1}] {action_type} [{action_name}]: FAILED — {err_msg}")
-                    # Check if script should stop on any failure
-                    if script.get("stop_on_failure"):
-                        self._log("error", "⏹️ Stopping execution due to failure (stop_on_failure is ON)")
-                        self._stop_requested = True
-                        break
 
                 # ---- Jump logic (from screenshot_match, etc.) ----
                 if jump_to and action_type not in ("jump", "if"):
@@ -1798,12 +1795,16 @@ class ScriptExecutor:
                         self._log("info", f"  🔀 Jumping to [{jump_to}] (action #{target_idx + 1})")
                         idx = target_idx
                         continue
-                    elif ok:
-                        self._log("info", f"  Jump target [{jump_to}] not found, continuing to next")
                     else:
                         self._log("error", f"  Jump target [{jump_to}] not found, stopping execution")
                         self._stop_requested = True
                         break
+
+                # Stop if action failed and no jump_on_fail was set to handle it
+                if not ok:
+                    self._log("error", "⏹️ Stopping execution due to failure (no jump_on_fail set)")
+                    self._stop_requested = True
+                    break
 
                 idx += 1
 
@@ -1815,7 +1816,12 @@ class ScriptExecutor:
                 break
 
         elapsed = time.time() - start_time
-        status = "success" if not self._stop_requested else "stopped"
+        if self._goto_target is not None:
+            status = "success"
+        elif self._stop_requested:
+            status = "stopped"
+        else:
+            status = "success"
         self._log("info", "──────────────────────────────────────")
         self._log(status, f"✅ Execution {status} in {elapsed:.1f}s — {success_count} success, {fail_count} failed")
 

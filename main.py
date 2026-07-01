@@ -114,6 +114,11 @@ async def settings_page(request: Request):
     """Settings page."""
     return render_template("settings.html", {"request": request, "title": "Settings", "nav_active": "settings"})
 
+@app.get("/gallery", response_class=HTMLResponse)
+async def gallery_page(request: Request):
+    """Template gallery — view, upload, rename, delete template images."""
+    return render_template("gallery.html", {"request": request, "title": "Gallery", "nav_active": "gallery"})
+
 
 @app.get("/logout")
 async def logout():
@@ -188,15 +193,63 @@ async def list_template_images():
             if ext in allowed:
                 full = os.path.join(config.TEMPLATE_DIR, fname)
                 size = os.path.getsize(full)
+                mtime = os.path.getmtime(full)
                 files.append({
                     "path": f"templates/{fname}",
                     "filename": fname,
                     "url": f"/static/templates/{fname}",
-                    "size": size
+                    "size": size,
+                    "mtime": mtime,
                 })
     except FileNotFoundError:
         pass
     return {"templates": files}
+
+
+@app.delete("/api/templates/{filename}")
+async def delete_template(filename: str):
+    """Delete a template image by filename."""
+    import config
+    # Sanitize: no path traversal
+    safe = os.path.basename(filename)
+    file_path = os.path.join(config.TEMPLATE_DIR, safe)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    os.remove(file_path)
+    return {"message": f"Deleted {safe}"}
+
+
+@app.put("/api/templates/{filename}/rename")
+async def rename_template(filename: str, request: Request):
+    """Rename a template image."""
+    import config
+    body = await request.json()
+    new_name = body.get("new_name", "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="new_name is required")
+
+    allowed = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'}
+    new_ext = os.path.splitext(new_name)[-1].lower()
+    if new_ext not in allowed:
+        raise HTTPException(status_code=400, detail=f"Extension '{new_ext}' not allowed")
+
+    safe_old = os.path.basename(filename)
+    safe_new = new_name.replace(" ", "_")
+    old_path = os.path.join(config.TEMPLATE_DIR, safe_old)
+    new_path = os.path.join(config.TEMPLATE_DIR, safe_new)
+
+    if not os.path.isfile(old_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    if os.path.exists(new_path):
+        raise HTTPException(status_code=409, detail="File with that name already exists")
+
+    os.rename(old_path, new_path)
+    return {
+        "message": f"Renamed to {safe_new}",
+        "filename": safe_new,
+        "url": f"/static/templates/{safe_new}",
+        "path": f"templates/{safe_new}",
+    }
 
 # ---- Run ----
 if __name__ == "__main__":

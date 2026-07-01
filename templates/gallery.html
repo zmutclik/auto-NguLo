@@ -1,0 +1,454 @@
+{% extends "base.html" %}
+{% block title %}Gallery Templates{% endblock %}
+{% set nav_active = 'gallery' %}
+
+{% block head_extra %}
+<style>
+    [x-cloak] { display: none !important; }
+    .img-card { transition: transform .15s, box-shadow .15s; }
+    .img-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    .overlay { background: linear-gradient(to top, rgba(0,0,0,.85) 0%, transparent 60%); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="gallery()" x-init="init()" class="space-y-6">
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold">🖼️ Template Gallery</h1>
+            <p class="text-slate-400 text-sm mt-1">
+                <span x-text="files.length"></span> file tersimpan
+                <span class="ml-2 text-slate-500" x-text="totalSizeLabel"></span>
+            </p>
+        </div>
+        <!-- Upload button -->
+        <label class="inline-flex items-center gap-2 bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 cursor-pointer">
+            <span>⬆️</span> Upload
+            <input type="file" accept="image/*" multiple class="hidden" @change="uploadFiles($event)">
+        </label>
+    </div>
+
+    <!-- Search & Sort -->
+    <div class="bg-surface-card border border-surface-border rounded-xl p-4">
+        <div class="flex gap-3">
+            <div class="relative flex-1">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+                <input x-model="search" type="text"
+                       class="w-full bg-slate-800 border border-surface-border rounded-lg pl-10 pr-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand transition-all text-sm"
+                       placeholder="Cari nama file...">
+            </div>
+            <select x-model="sortBy" class="bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-brand">
+                <option value="name">Nama A-Z</option>
+                <option value="name_desc">Nama Z-A</option>
+                <option value="newest">Terbaru</option>
+                <option value="oldest">Terlama</option>
+                <option value="size_desc">Ukuran ↓</option>
+                <option value="size_asc">Ukuran ↑</option>
+            </select>
+            <!-- View toggle -->
+            <div class="flex gap-1 bg-slate-800 border border-surface-border rounded-lg p-1">
+                <button @click="viewMode='grid'" :class="viewMode==='grid' ? 'bg-brand text-white' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-md text-sm transition-colors">⊞</button>
+                <button @click="viewMode='list'" :class="viewMode==='list' ? 'bg-brand text-white' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-md text-sm transition-colors">☰</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload progress -->
+    <template x-if="uploading">
+        <div class="bg-surface-card border border-brand/40 rounded-xl p-4 flex items-center gap-3">
+            <div class="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin"></div>
+            <span class="text-slate-300 text-sm">Mengupload <span x-text="uploadQueue"></span> file...</span>
+        </div>
+    </template>
+
+    <!-- Toast -->
+    <template x-if="toast.show">
+        <div :class="toast.type==='error' ? 'border-danger/40 bg-red-900/20' : 'border-success/40 bg-green-900/20'"
+             class="fixed bottom-6 right-6 z-50 border rounded-xl px-5 py-3 text-sm font-medium shadow-xl"
+             x-text="toast.msg"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0"
+             x-transition:leave="transition ease-in duration-150"
+             x-transition:leave-start="opacity-100"
+             x-transition:leave-end="opacity-0">
+        </div>
+    </template>
+
+    <!-- Empty state -->
+    <template x-if="!loading && filteredFiles.length === 0">
+        <div class="text-center py-20 text-slate-500">
+            <div class="text-6xl mb-4">🖼️</div>
+            <p class="text-lg font-medium" x-text="files.length === 0 ? 'Belum ada template' : 'Tidak ada file yang cocok'"></p>
+            <p class="text-sm mt-1" x-text="files.length === 0 ? 'Upload gambar template untuk screenshot_match' : 'Coba kata kunci lain'"></p>
+        </div>
+    </template>
+
+    <!-- Loading -->
+    <template x-if="loading">
+        <div class="text-center py-20 text-slate-500">
+            <div class="w-8 h-8 border-2 border-brand border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+            <p class="text-sm">Memuat...</p>
+        </div>
+    </template>
+
+    <!-- GRID VIEW -->
+    <template x-if="!loading && viewMode === 'grid'">
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            <template x-for="f in filteredFiles" :key="f.filename">
+                <div class="img-card bg-surface-card border border-surface-border rounded-xl overflow-hidden group relative">
+                    <!-- Image -->
+                    <div class="aspect-square bg-slate-900 overflow-hidden cursor-pointer" @click="openPreview(f)">
+                        <img :src="f.url + '?t=' + f.mtime" :alt="f.filename"
+                             class="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform duration-200"
+                             loading="lazy">
+                    </div>
+                    <!-- Overlay info -->
+                    <div class="p-3">
+                        <p class="text-xs text-slate-200 font-medium truncate" x-text="f.filename" :title="f.filename"></p>
+                        <p class="text-xs text-slate-500 mt-0.5" x-text="formatSize(f.size)"></p>
+                    </div>
+                    <!-- Action buttons -->
+                    <div class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button @click.stop="startRename(f)"
+                                class="w-7 h-7 bg-slate-800/90 hover:bg-brand rounded-lg flex items-center justify-center text-xs transition-colors"
+                                title="Rename">✏️</button>
+                        <button @click.stop="confirmDelete(f)"
+                                class="w-7 h-7 bg-slate-800/90 hover:bg-danger rounded-lg flex items-center justify-center text-xs transition-colors"
+                                title="Hapus">🗑️</button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </template>
+
+    <!-- LIST VIEW -->
+    <template x-if="!loading && viewMode === 'list'">
+        <div class="bg-surface-card border border-surface-border rounded-xl overflow-hidden divide-y divide-surface-border">
+            <template x-for="f in filteredFiles" :key="f.filename">
+                <div class="flex items-center gap-4 px-4 py-3 hover:bg-slate-800/50 transition-colors group">
+                    <!-- Thumbnail -->
+                    <div class="w-12 h-12 bg-slate-900 rounded-lg overflow-hidden shrink-0 cursor-pointer" @click="openPreview(f)">
+                        <img :src="f.url + '?t=' + f.mtime" :alt="f.filename"
+                             class="w-full h-full object-contain p-0.5" loading="lazy">
+                    </div>
+                    <!-- Info -->
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm text-slate-200 font-medium truncate" x-text="f.filename"></p>
+                        <p class="text-xs text-slate-500 mt-0.5">
+                            <span x-text="formatSize(f.size)"></span>
+                            <span class="mx-1">·</span>
+                            <span x-text="formatDate(f.mtime)"></span>
+                        </p>
+                    </div>
+                    <!-- Copy path -->
+                    <button @click="copyPath(f)"
+                            class="text-xs text-slate-500 hover:text-brand px-2 py-1 rounded transition-colors hidden sm:block"
+                            title="Copy path">📋 path</button>
+                    <!-- Actions -->
+                    <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button @click="startRename(f)"
+                                class="px-3 py-1.5 bg-slate-700 hover:bg-brand text-slate-300 hover:text-white rounded-lg text-xs transition-colors">✏️ Rename</button>
+                        <button @click="confirmDelete(f)"
+                                class="px-3 py-1.5 bg-slate-700 hover:bg-danger text-slate-300 hover:text-white rounded-lg text-xs transition-colors">🗑️ Hapus</button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </template>
+
+
+<!-- ===== PREVIEW MODAL ===== -->
+<div x-show="preview.open" x-cloak
+     class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+     @click.self="preview.open = false"
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0">
+    <div class="bg-surface-card border border-surface-border rounded-2xl overflow-hidden max-w-lg w-full shadow-2xl"
+         @click.stop
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 scale-95"
+         x-transition:enter-end="opacity-100 scale-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 scale-100"
+         x-transition:leave-end="opacity-0 scale-95">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+            <p class="font-semibold text-slate-200 truncate" x-text="preview.file?.filename"></p>
+            <button @click="preview.open = false" class="text-slate-400 hover:text-slate-200 text-xl leading-none">✕</button>
+        </div>
+        <div class="bg-slate-900 flex items-center justify-center p-4 min-h-48">
+            <img :src="preview.file?.url" :alt="preview.file?.filename"
+                 class="max-w-full max-h-96 object-contain rounded-lg">
+        </div>
+        <div class="px-5 py-4 flex items-center justify-between gap-3">
+            <div class="text-sm text-slate-400">
+                <span x-text="formatSize(preview.file?.size)"></span>
+                <span class="mx-1">·</span>
+                <span x-text="formatDate(preview.file?.mtime)"></span>
+            </div>
+            <div class="flex gap-2">
+                <button @click="copyPath(preview.file)"
+                        class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs transition-colors">📋 Copy Path</button>
+                <a :href="preview.file?.url" download
+                   class="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded-lg text-xs transition-colors">⬇️ Download</a>
+                <button @click="startRename(preview.file); preview.open=false"
+                        class="px-3 py-1.5 bg-slate-700 hover:bg-brand text-slate-300 hover:text-white rounded-lg text-xs transition-colors">✏️ Rename</button>
+                <button @click="confirmDelete(preview.file); preview.open=false"
+                        class="px-3 py-1.5 bg-slate-700 hover:bg-danger text-slate-300 hover:text-white rounded-lg text-xs transition-colors">🗑️ Hapus</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== RENAME MODAL ===== -->
+<div x-show="renameModal.open" x-cloak
+     class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+     @click.self="renameModal.open = false"
+     x-transition:enter="transition ease-out duration-150"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-100"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0">
+    <div class="bg-surface-card border border-surface-border rounded-2xl p-6 max-w-sm w-full shadow-2xl"
+         @click.stop
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0 scale-95"
+         x-transition:enter-end="opacity-100 scale-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100 scale-100"
+         x-transition:leave-end="opacity-0 scale-95">
+        <h3 class="font-semibold text-slate-200 mb-4">✏️ Rename File</h3>
+        <p class="text-xs text-slate-500 mb-2">Nama lama:</p>
+        <p class="text-sm text-slate-300 font-mono bg-slate-800 rounded-lg px-3 py-2 mb-4 truncate" x-text="renameModal.file?.filename"></p>
+        <p class="text-xs text-slate-500 mb-2">Nama baru:</p>
+        <input x-model="renameModal.newName" type="text"
+               class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand text-sm mb-4"
+               placeholder="nama_baru.png"
+               @keydown.enter="doRename()"
+               x-ref="renameInput">
+        <div class="flex gap-3 justify-end">
+            <button @click="renameModal.open = false"
+                    class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors">Batal</button>
+            <button @click="doRename()" :disabled="renameModal.loading"
+                    class="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm transition-colors disabled:opacity-50"
+                    x-text="renameModal.loading ? 'Menyimpan...' : 'Simpan'">
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== DELETE CONFIRM MODAL ===== -->
+<div x-show="deleteModal.open" x-cloak
+     class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+     @click.self="deleteModal.open = false"
+     x-transition:enter="transition ease-out duration-150"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-100"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0">
+    <div class="bg-surface-card border border-surface-border rounded-2xl p-6 max-w-sm w-full shadow-2xl"
+         @click.stop
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0 scale-95"
+         x-transition:enter-end="opacity-100 scale-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100 scale-100"
+         x-transition:leave-end="opacity-0 scale-95">
+        <h3 class="font-semibold text-slate-200 mb-2">🗑️ Hapus File?</h3>
+        <p class="text-sm text-slate-400 mb-4">
+            File <span class="text-slate-200 font-mono" x-text="deleteModal.file?.filename"></span> akan dihapus permanen dan tidak bisa dikembalikan.
+        </p>
+        <div class="flex gap-3 justify-end">
+            <button @click="deleteModal.open = false"
+                    class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors">Batal</button>
+            <button @click="doDelete()" :disabled="deleteModal.loading"
+                    class="px-4 py-2 bg-danger hover:bg-red-600 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
+                    x-text="deleteModal.loading ? 'Menghapus...' : 'Ya, Hapus'">
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function gallery() {
+    return {
+        files: [],
+        loading: true,
+        search: '',
+        sortBy: 'newest',
+        viewMode: 'grid',
+        uploading: false,
+        uploadQueue: 0,
+        toast: { show: false, msg: '', type: 'success' },
+        preview: { open: false, file: null },
+        renameModal: { open: false, file: null, newName: '', loading: false },
+        deleteModal: { open: false, file: null, loading: false },
+
+        async init() {
+            await this.loadFiles();
+        },
+
+        async loadFiles() {
+            this.loading = true;
+            try {
+                const res = await fetch('/api/templates');
+                const data = await res.json();
+                this.files = data.templates || [];
+            } catch (e) {
+                this.showToast('Gagal memuat file', 'error');
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        get filteredFiles() {
+            let list = this.files.filter(f =>
+                f.filename.toLowerCase().includes(this.search.toLowerCase())
+            );
+            switch (this.sortBy) {
+                case 'name':      list.sort((a,b) => a.filename.localeCompare(b.filename)); break;
+                case 'name_desc': list.sort((a,b) => b.filename.localeCompare(a.filename)); break;
+                case 'newest':    list.sort((a,b) => b.mtime - a.mtime); break;
+                case 'oldest':    list.sort((a,b) => a.mtime - b.mtime); break;
+                case 'size_desc': list.sort((a,b) => b.size - a.size); break;
+                case 'size_asc':  list.sort((a,b) => a.size - b.size); break;
+            }
+            return list;
+        },
+
+        get totalSizeLabel() {
+            const total = this.files.reduce((s, f) => s + (f.size || 0), 0);
+            return '· ' + this.formatSize(total) + ' total';
+        },
+
+        formatSize(bytes) {
+            if (!bytes) return '0 B';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        },
+
+        formatDate(ts) {
+            if (!ts) return '';
+            return new Date(ts * 1000).toLocaleString('id-ID', {
+                day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+        },
+
+        openPreview(f) {
+            this.preview.file = f;
+            this.preview.open = true;
+        },
+
+        async copyPath(f) {
+            if (!f) return;
+            try {
+                await navigator.clipboard.writeText(f.path);
+                this.showToast('Path disalin: ' + f.path);
+            } catch {
+                this.showToast('Gagal menyalin path', 'error');
+            }
+        },
+
+        // ---- Upload ----
+        async uploadFiles(event) {
+            const fileList = Array.from(event.target.files);
+            if (!fileList.length) return;
+            this.uploading = true;
+            this.uploadQueue = fileList.length;
+            let ok = 0, fail = 0;
+            for (const file of fileList) {
+                const fd = new FormData();
+                fd.append('file', file);
+                try {
+                    const res = await fetch('/api/upload/template', { method: 'POST', body: fd });
+                    if (res.ok) ok++;
+                    else fail++;
+                } catch { fail++; }
+                this.uploadQueue--;
+            }
+            this.uploading = false;
+            event.target.value = '';
+            await this.loadFiles();
+            if (fail === 0) this.showToast(`✅ ${ok} file berhasil diupload`);
+            else this.showToast(`⚠️ ${ok} berhasil, ${fail} gagal`, fail > 0 ? 'error' : 'success');
+        },
+
+        // ---- Rename ----
+        startRename(f) {
+            this.renameModal.file = f;
+            this.renameModal.newName = f.filename;
+            this.renameModal.loading = false;
+            this.renameModal.open = true;
+            this.$nextTick(() => {
+                if (this.$refs.renameInput) this.$refs.renameInput.focus();
+            });
+        },
+
+        async doRename() {
+            const f = this.renameModal.file;
+            const newName = this.renameModal.newName.trim();
+            if (!newName || newName === f.filename) { this.renameModal.open = false; return; }
+            this.renameModal.loading = true;
+            try {
+                const res = await fetch(`/api/templates/${encodeURIComponent(f.filename)}/rename`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ new_name: newName }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Gagal rename');
+                this.renameModal.open = false;
+                await this.loadFiles();
+                this.showToast('✅ File berhasil direname');
+            } catch (e) {
+                this.showToast(e.message, 'error');
+            } finally {
+                this.renameModal.loading = false;
+            }
+        },
+
+        // ---- Delete ----
+        confirmDelete(f) {
+            this.deleteModal.file = f;
+            this.deleteModal.loading = false;
+            this.deleteModal.open = true;
+        },
+
+        async doDelete() {
+            const f = this.deleteModal.file;
+            this.deleteModal.loading = true;
+            try {
+                const res = await fetch(`/api/templates/${encodeURIComponent(f.filename)}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Gagal hapus');
+                this.deleteModal.open = false;
+                await this.loadFiles();
+                this.showToast('🗑️ File berhasil dihapus');
+            } catch (e) {
+                this.showToast(e.message, 'error');
+            } finally {
+                this.deleteModal.loading = false;
+            }
+        },
+
+        // ---- Toast ----
+        showToast(msg, type = 'success') {
+            this.toast = { show: true, msg, type };
+            setTimeout(() => { this.toast.show = false; }, 3000);
+        },
+    };
+}
+</script>
+
+</div><!-- end x-data="gallery()" -->
+{% endblock %}

@@ -134,6 +134,10 @@ async def get_script(script_id: int):
 @router.post("")
 async def create_script(data: ScriptCreate):
     db = await get_db()
+    # Check unique name
+    cursor_check = await db.execute("SELECT id FROM scripts WHERE name=?", (data.name,))
+    if await cursor_check.fetchone():
+        raise HTTPException(status_code=409, detail=f"Script name '{data.name}' already exists")
     cursor = await db.execute(
         """INSERT INTO scripts (name, description, repeat_count, delay_between_ms, stop_on_failure)
            VALUES (?, ?, ?, ?, ?)""",
@@ -150,6 +154,12 @@ async def update_script(script_id: int, data: ScriptUpdate):
     db = await get_db()
     updates = {}
     if data.name is not None:
+        # Check unique name (exclude current script)
+        cursor_check = await db.execute(
+            "SELECT id FROM scripts WHERE name=? AND id!=?", (data.name, script_id)
+        )
+        if await cursor_check.fetchone():
+            raise HTTPException(status_code=409, detail=f"Script name '{data.name}' already exists")
         updates["name"] = data.name
     if data.description is not None:
         updates["description"] = data.description

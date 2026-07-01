@@ -21,7 +21,7 @@ def _row_to_dict(row) -> dict:
 
 
 async def _get_script_dict(script_id: int) -> dict | None:
-    """Load a script with its actions from DB. Returns None if not found."""
+    """Load a script with its actions from DB by ID. Returns None if not found."""
     db = await get_db()
     cursor = await db.execute("SELECT * FROM scripts WHERE id=?", (script_id,))
     script_row = await cursor.fetchone()
@@ -30,6 +30,20 @@ async def _get_script_dict(script_id: int) -> dict | None:
     script = _row_to_dict(script_row)
     cursor2 = await db.execute(
         "SELECT * FROM actions WHERE script_id=? ORDER BY order_num", (script_id,)
+    )
+    script["actions"] = [_row_to_dict(r) for r in await cursor2.fetchall()]
+    return script
+
+async def _get_script_dict_by_name(script_name: str) -> dict | None:
+    """Load a script with its actions from DB by name. Returns None if not found."""
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM scripts WHERE name=?", (script_name,))
+    script_row = await cursor.fetchone()
+    if not script_row:
+        return None
+    script = _row_to_dict(script_row)
+    cursor2 = await db.execute(
+        "SELECT * FROM actions WHERE script_id=? ORDER BY order_num", (script["id"],)
     )
     script["actions"] = [_row_to_dict(r) for r in await cursor2.fetchall()]
     return script
@@ -60,9 +74,9 @@ async def execute_script(script_id: int):
     use_mock = not await adb_available()
     executor = ScriptExecutor(mock_mode=use_mock)
 
-    # Set up script_loader so call_script / goto_script actions can load other scripts
-    async def _load_script(sid: int) -> dict:
-        return await _get_script_dict(sid)
+    # Set up script_loader so call_script / goto_script actions can load other scripts by name
+    async def _load_script(sname: str) -> dict:
+        return await _get_script_dict_by_name(sname)
 
     executor.script_loader = _load_script
 
@@ -96,15 +110,15 @@ async def execute_script(script_id: int):
             await db.commit()
 
             # Check if we should chain to another script via goto_script
-            goto_target = result.get("_goto_target")
+            goto_target = result.get("_goto_target")  # now a script name string
             if goto_target and goto_target not in goto_chain:
                 goto_chain.append(goto_target)
-                next_script = await _get_script_dict(goto_target)
+                next_script = await _get_script_dict_by_name(goto_target)
                 if next_script and next_script.get("actions"):
                     # Create a new log entry for the target script
                     new_log_cursor = await db.execute(
                         "INSERT INTO execution_logs (script_id, script_name, status, total_actions) VALUES (?, ?, 'running', ?)",
-                        (goto_target, next_script["name"], len(next_script["actions"]))
+                        (next_script["id"], next_script["name"], len(next_script["actions"]))
                     )
                     new_log_id = new_log_cursor.lastrowid
                     await db.commit()
@@ -120,12 +134,12 @@ async def execute_script(script_id: int):
 
                     # Reset logs for the new script
                     current_logs.clear()
-                    log_cb("info", f"🔀 Transferred from script #{current_script.get('id')} via goto_script")
+                    log_cb("info", f"🔀 Transferred from script [{current_script.get('name')}] via goto_script")
                     current_script = next_script
                     current_log_id = new_log_id
                     continue
                 else:
-                    log_cb("error", f"❌ goto_script target #{goto_target} not found or has no actions")
+                    log_cb("error", f"❌ goto_script target [{goto_target}] not found or has no actions")
             break
 
         _active_executors.pop(log_id, None)

@@ -45,7 +45,7 @@
             <h2 class="font-semibold mb-5 flex items-center gap-2"><span class="w-7 h-7 rounded-lg bg-brand/10 flex items-center justify-center">📋</span> Script Info</h2>
             <div class="mb-4">
                 <label class="block text-xs font-medium text-slate-400 mb-1.5">Name *</label>
-                <input x-model="script.name" type="text" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand">
+                <input x-model="script.name" @input="script.name = $event.target.value.replace(/ /g, '_').replace(/[^a-zA-Z0-9_]/g, '')" type="text" placeholder="letters_numbers_underscore" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand">
             </div>
             <div class="mb-4">
                 <label class="block text-xs font-medium text-slate-400 mb-1.5">Description</label>
@@ -537,9 +537,9 @@
                         <!-- Call Script -->
                         <div x-show="a.action_type === 'call_script'" class="space-y-3 mb-3">
                             <div>
-                                <label class="block text-xs font-medium text-slate-500 mb-1">📞 Target Script ID</label>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📞 Target Script Name</label>
                                 <div class="flex items-center gap-2">
-                                    <input x-model.number="a.call_script_id" type="number" min="1" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Script ID...">
+                                    <input x-model="a.call_script_name" type="text" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="nama_script...">
                                 </div>
                                 <p class="text-xs text-slate-600 mt-1">Panggil script lain & tunggu sampai selesai, lalu lanjutkan script ini.</p>
                             </div>
@@ -554,9 +554,9 @@
                         <!-- Goto Script -->
                         <div x-show="a.action_type === 'goto_script'" class="space-y-3 mb-3">
                             <div>
-                                <label class="block text-xs font-medium text-slate-500 mb-1">🔁 Target Script ID</label>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">🔁 Target Script Name</label>
                                 <div class="flex items-center gap-2">
-                                    <input x-model.number="a.goto_script_id" type="number" min="1" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Script ID...">
+                                    <input x-model="a.goto_script_name" type="text" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="nama_script...">
                                 </div>
                                 <p class="text-xs text-slate-600 mt-1">Pindahkan seluruh eksekusi ke script lain. Script ini berhenti, script target mulai.</p>
                             </div>
@@ -880,7 +880,7 @@
                     orientation_value:'auto',
                     app_package:'',
                     sms_type:'inbox', sms_limit:1,
-                    call_script_id:null, goto_script_id:null,
+                    call_script_name:'', goto_script_name:'',
                     toast_message:'', toast_duration:'short',
                     // coordinate picker state
                     _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
@@ -933,7 +933,7 @@
                         orientation_value: a.orientation_value || 'auto',
                         app_package: a.app_package || '',
                         sms_type: a.sms_type || 'inbox', sms_limit: a.sms_limit || 1,
-                        call_script_id: a.call_script_id || null, goto_script_id: a.goto_script_id || null,
+                        call_script_name: a.call_script_name || '', goto_script_name: a.goto_script_name || '',
                         toast_message: a.toast_message || '', toast_duration: a.toast_duration || 'short',
                         use_match_result: !!a.use_match_result,
                         wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,

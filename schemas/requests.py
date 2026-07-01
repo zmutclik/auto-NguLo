@@ -18,14 +18,14 @@ class PasswordUpdateRequest(BaseModel):
 
 # ---- Scripts ----
 class ScriptCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_]+$")
     description: str = ""
     repeat_count: int = Field(default=1, ge=1, le=999)
     delay_between_ms: int = Field(default=1000, ge=0, le=60000)
     stop_on_failure: bool = False
 
 class ScriptUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    name: Optional[str] = Field(None, min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_]+$")
     description: Optional[str] = None
     repeat_count: Optional[int] = Field(None, ge=1, le=999)
     delay_between_ms: Optional[int] = Field(None, ge=0, le=60000)
@@ -87,8 +87,8 @@ class ActionCreate(BaseModel):
     # launch_app / kill_app
     app_package: str = ""
     # call_script / goto_script
-    call_script_id: Optional[int] = None
-    goto_script_id: Optional[int] = None
+    call_script_name: str = ""
+    goto_script_name: str = ""
     # toast
     toast_message: str = ""
     toast_duration: str = "short"
@@ -145,8 +145,8 @@ class ActionUpdate(BaseModel):
     # launch_app / kill_app
     app_package: Optional[str] = None
     # call_script / goto_script
-    call_script_id: Optional[int] = None
-    goto_script_id: Optional[int] = None
+    call_script_name: Optional[str] = None
+    goto_script_name: Optional[str] = None
     # toast
     toast_message: Optional[str] = None
     toast_duration: Optional[str] = None

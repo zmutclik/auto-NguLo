@@ -97,8 +97,8 @@ async def init_db():
             -- launch_app / kill_app
             app_package     TEXT DEFAULT '',
             -- call_script / goto_script
-            call_script_id  INTEGER DEFAULT NULL,
-            goto_script_id  INTEGER DEFAULT NULL,
+            call_script_name TEXT DEFAULT '',
+            goto_script_name TEXT DEFAULT '',
             -- toast
             toast_message   TEXT DEFAULT '',
             toast_duration  TEXT DEFAULT 'short',
@@ -131,8 +131,10 @@ async def init_db():
         INSERT OR IGNORE INTO config (key, value) VALUES ('password', '123456');
     """)
     # ---- Migrations for new columns (safe to run multiple times) ----
-    await _migrate_add_column(db, "actions", "call_script_id", "INTEGER DEFAULT NULL")
-    await _migrate_add_column(db, "actions", "goto_script_id", "INTEGER DEFAULT NULL")
+    await _migrate_add_column(db, "actions", "call_script_name", "TEXT DEFAULT ''")
+    await _migrate_add_column(db, "actions", "goto_script_name", "TEXT DEFAULT ''")
+    # Back-fill script names from old integer ID columns (one-time migration for existing data)
+    await _migrate_backfill_script_names(db)
     await db.commit()
 
 
@@ -142,6 +144,26 @@ async def _migrate_add_column(db, table: str, column: str, col_def: str):
         await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
     except Exception:
         pass  # column already exists
+
+async def _migrate_backfill_script_names(db):
+    """Back-fill call_script_name / goto_script_name from old integer ID columns for existing rows."""
+    # Check if old columns still exist
+    cursor = await db.execute("PRAGMA table_info(actions)")
+    cols = {row[1] for row in await cursor.fetchall()}
+    if "call_script_id" in cols:
+        await db.execute("""
+            UPDATE actions
+            SET call_script_name = (SELECT name FROM scripts WHERE scripts.id = actions.call_script_id)
+            WHERE (call_script_name IS NULL OR call_script_name = '')
+              AND call_script_id IS NOT NULL
+        """)
+    if "goto_script_id" in cols:
+        await db.execute("""
+            UPDATE actions
+            SET goto_script_name = (SELECT name FROM scripts WHERE scripts.id = actions.goto_script_id)
+            WHERE (goto_script_name IS NULL OR goto_script_name = '')
+              AND goto_script_id IS NOT NULL
+        """)
 
     # Migration: add stop_on_failure column (v1.4+)
     try:
