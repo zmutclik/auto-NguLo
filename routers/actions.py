@@ -179,3 +179,116 @@ async def reorder_actions(script_id: int, data: ActionReorderRequest):
         )
     await db.commit()
     return await list_actions(script_id)
+
+
+from pydantic import BaseModel as _BaseModel
+
+class _CopyMoveRequest(_BaseModel):
+    action_ids: list[int]
+    target_script_id: int
+    mode: str = "copy"  # "copy" or "move"
+
+
+@router.post("/copy-move")
+async def copy_move_actions(script_id: int, data: _CopyMoveRequest):
+    """Copy or move one or more actions to another script."""
+    await _script_exists(script_id)
+    db = await get_db()
+
+    # Validate target script exists
+    cursor = await db.execute("SELECT id FROM scripts WHERE id=?", (data.target_script_id,))
+    if not await cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Target script not found")
+
+    if data.mode not in ("copy", "move"):
+        raise HTTPException(status_code=400, detail="mode must be 'copy' or 'move'")
+
+    # Fetch the actions to copy/move (in order)
+    placeholders = ",".join("?" * len(data.action_ids))
+    cursor = await db.execute(
+        f"SELECT * FROM actions WHERE id IN ({placeholders}) AND script_id=? ORDER BY order_num",
+        (*data.action_ids, script_id)
+    )
+    rows = [_row_to_dict(r) for r in await cursor.fetchall()]
+    if not rows:
+        raise HTTPException(status_code=404, detail="No matching actions found in source script")
+
+    # Get next order_num in target script
+    cursor = await db.execute(
+        "SELECT COALESCE(MAX(order_num), -1) + 1 AS nxt FROM actions WHERE script_id=?",
+        (data.target_script_id,)
+    )
+    next_order = (await cursor.fetchone())["nxt"]
+
+    inserted_ids = []
+    for i, row in enumerate(rows):
+        cursor = await db.execute(
+            """INSERT INTO actions (
+                script_id, order_num, name, action_type,
+                x, y, x2, y2, duration_ms,
+                template_path, template_path2, match_threshold, retry_count, retry_delay_ms,
+                jump_on_success, jump_on_fail,
+                match_region_x, match_region_y, match_region_w, match_region_h, match_region_screen,
+                key_code, combo_action,
+                api_url, api_method, api_headers, api_body, api_save_to_var,
+                var_name, var_operation, var_value,
+                text_content, text_speed_ms,
+                jump_to,
+                condition_var, condition_op, condition_value, jump_on_true, jump_on_false,
+                orientation_value, app_package,
+                call_script_name, goto_script_name,
+                toast_message, toast_duration,
+                use_match_result, wait_ms, wait_before_ms, wait_after_ms
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                data.target_script_id, next_order + i,
+                row.get("name", f"action_{i}"), row.get("action_type", "wait"),
+                row.get("x"), row.get("y"), row.get("x2"), row.get("y2"),
+                row.get("duration_ms", 300),
+                row.get("template_path", ""), row.get("template_path2", ""),
+                row.get("match_threshold", 0.8),
+                row.get("retry_count", 1), row.get("retry_delay_ms", 1000),
+                row.get("jump_on_success", ""), row.get("jump_on_fail", ""),
+                row.get("match_region_x"), row.get("match_region_y"),
+                row.get("match_region_w"), row.get("match_region_h"),
+                row.get("match_region_screen"),
+                row.get("key_code", "HOME"), row.get("combo_action", "select_all"),
+                row.get("api_url", ""), row.get("api_method", "GET"),
+                row.get("api_headers", "{}"), row.get("api_body", ""),
+                row.get("api_save_to_var", ""),
+                row.get("var_name", ""), row.get("var_operation", "set"),
+                row.get("var_value", ""),
+                row.get("text_content", ""), row.get("text_speed_ms", 50),
+                row.get("jump_to", ""),
+                row.get("condition_var", ""), row.get("condition_op", "eq"),
+                row.get("condition_value", ""),
+                row.get("jump_on_true", ""), row.get("jump_on_false", ""),
+                row.get("orientation_value", "auto"), row.get("app_package", ""),
+                row.get("call_script_name", ""), row.get("goto_script_name", ""),
+                row.get("toast_message", ""), row.get("toast_duration", "short"),
+                row.get("use_match_result", 0),
+                row.get("wait_ms", 1000), row.get("wait_before_ms", 500),
+                row.get("wait_after_ms", 500),
+            )
+        )
+        inserted_ids.append(cursor.lastrowid)
+
+    if data.mode == "move":
+        # Delete originals from source script
+        await db.execute(
+            f"DELETE FROM actions WHERE id IN ({placeholders}) AND script_id=?",
+            (*data.action_ids, script_id)
+        )
+        # Re-number remaining actions in source script
+        remaining = await (await db.execute(
+            "SELECT id FROM actions WHERE script_id=? ORDER BY order_num", (script_id,)
+        )).fetchall()
+        for i, r in enumerate(remaining):
+            await db.execute("UPDATE actions SET order_num=? WHERE id=?", (i, r["id"]))
+
+    await db.commit()
+    return {
+        "message": f"{'Moved' if data.mode == 'move' else 'Copied'} {len(rows)} action(s) to script {data.target_script_id}",
+        "inserted_ids": inserted_ids,
+        "count": len(rows),
+    }

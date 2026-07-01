@@ -10,6 +10,7 @@
 {% endblock %}
 {% block content %}
 
+<div x-data="historyPage()" x-init="load()">
 <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
     <div>
         <h1 class="text-2xl font-bold">📜 Execution History</h1>
@@ -32,7 +33,7 @@
     </div>
 </div>
 
-<div class="space-y-4" x-data="historyPage()" x-init="load()">
+<div class="space-y-4">
     <template x-for="(entry, idx) in filteredHistory" :key="entry.id">
         <div class="bg-surface-card border border-surface-border rounded-xl overflow-hidden shadow-md hover:border-slate-600 transition-all animate-slide-up">
             <div class="p-5 cursor-pointer" @click="entry._expanded=!entry._expanded">
@@ -114,6 +115,8 @@
         </div>
     </div>
 </div>
+
+</div><!-- end outer x-data wrapper -->
 
 <script>
     function historyPage() {

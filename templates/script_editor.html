@@ -86,15 +86,17 @@
 
         <div id="actions-list" class="space-y-3">
             <template x-for="(a, idx) in actions" :key="a._id">
-                <div :data-id="a._id" class="action-card bg-surface-card border border-surface-border rounded-xl overflow-hidden group">
-                    <div class="flex items-center gap-3 p-4 cursor-pointer" @click="a._expanded = !a._expanded">
+                <div :data-id="a._id" :class="copyMoveSelectedIds.includes(a._id) ? 'ring-2 ring-brand/60 border-brand/40' : 'border-surface-border'" class="action-card bg-surface-card border rounded-xl overflow-hidden group">
+                    <div class="flex items-center gap-3 p-4">
+                        <!-- Checkbox pilih (selalu terlihat) -->
                         <span class="drag-handle text-slate-600 group-hover:text-slate-400 shrink-0"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h2v2H8V6zm6 0h2v2h-2V6zM8 11h2v2H8v-2zm6 0h2v2h-2v-2zm-6 5h2v2H8v-2zm6 0h2v2h-2v-2z"/></svg></span>
+                        <input type="checkbox" :checked="copyMoveSelectedIds.includes(a._id)" @change.stop="toggleCopyMoveSelect(a._id)" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-brand focus:ring-brand shrink-0 cursor-pointer" title="Pilih action ini">
                         <span class="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400 font-mono shrink-0" x-text="idx+1"></span>
                         <span x-text="typeIcon(a.action_type)" class="text-lg"></span>
-                        <div class="flex-1 min-w-0">
+                        <div class="flex-1 min-w-0 cursor-pointer" @click="a._expanded = !a._expanded">
                             <span class="text-sm font-medium text-slate-200" x-text="a.name"></span>
                         </div>
-                        <svg :class="a._expanded ? 'rotate-180' : ''" class="w-4 h-4 text-slate-500 transition-transform shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <svg :class="a._expanded ? 'rotate-180' : ''" class="w-4 h-4 text-slate-500 transition-transform shrink-0 cursor-pointer" @click="a._expanded = !a._expanded" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                     </div>
 
                     <div x-show="a._expanded" x-transition class="border-t border-surface-border bg-slate-900/50 px-4 py-4 animate-slide">
@@ -595,7 +597,8 @@
                             <div><label class="text-xs text-slate-500">Wait After (ms)</label><input x-model.number="a.wait_after_ms" type="number" min="0" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
                         </div>
 
-                        <div class="flex justify-end mt-3 pt-3 border-t border-slate-700/50">
+                        <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-700/50">
+                            <button @click.stop="openCopyMoveModal([a._id])" class="text-xs text-slate-500 hover:text-brand inline-flex items-center gap-1 transition-colors">📋 Copy/Move action ini</button>
                             <button @click="deleteAction(idx)" class="text-xs text-slate-500 hover:text-danger inline-flex items-center gap-1">🗑️ Remove</button>
                         </div>
                     </div>
@@ -609,9 +612,83 @@
             </div>
         </div>
 
-        <div x-show="actions.length > 0" class="flex justify-end pt-2">
-            <button @click="addAction()" class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-sm font-semibold rounded-lg mx-2 px-2 py-2.5 transition-colors shadow-sm shadow-success/20">＋ Add Action</button> 
-            <button @click="save()" class="bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 text-sm">💾 <span x-text="isNew ? 'Create Script' : 'Save All Changes'"></span></button>
+        <div x-show="actions.length > 0" class="flex flex-wrap items-center justify-between gap-2 pt-2">
+            <div class="flex items-center gap-2">
+                <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+                    <input type="checkbox" @change="toggleSelectAll($event)" :checked="copyMoveSelectedIds.length === actions.length && actions.length > 0" class="w-3.5 h-3.5 rounded bg-slate-800 border-surface-border text-brand focus:ring-brand">
+                    <span>Pilih Semua</span>
+                </label>
+                <button x-show="copyMoveSelectedIds.length > 0" @click="openCopyMoveModal(copyMoveSelectedIds)" class="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg px-3 py-2 transition-colors">
+                    📋 Copy/Move (<span x-text="copyMoveSelectedIds.length"></span>)
+                </button>
+            </div>
+            <div class="flex items-center gap-2">
+                <button @click="addAction()" class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-sm font-semibold rounded-lg mx-2 px-2 py-2.5 transition-colors shadow-sm shadow-success/20">＋ Add Action</button>
+                <button @click="save()" class="bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-5 py-3 transition-all shadow-lg shadow-brand/25 text-sm">💾 <span x-text="isNew ? 'Create Script' : 'Save All Changes'"></span></button>
+            </div>
+        </div>
+
+        <!-- Copy/Move to Script Modal -->
+        <div x-show="showCopyMoveModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" x-transition.opacity @click.self="closeCopyMoveModal()">
+            <div class="bg-slate-800 border border-surface-border rounded-2xl w-full max-w-md shadow-2xl" @click.stop="">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+                    <h3 class="font-semibold text-slate-100">📋 Copy / Move Action ke Script Lain</h3>
+                    <button @click="closeCopyMoveModal()" class="text-slate-400 hover:text-slate-200 text-lg cursor-pointer">✕</button>
+                </div>
+                <div class="px-5 py-4 space-y-4">
+                    <!-- Selected actions summary -->
+                    <div class="bg-slate-900/60 rounded-xl p-3 border border-slate-700/40">
+                        <p class="text-xs text-slate-400 mb-1.5">Action yang dipilih (<span x-text="copyMoveSelectedIds.length" class="text-brand font-bold"></span>):</p>
+                        <div class="space-y-1 max-h-32 overflow-y-auto">
+                            <template x-for="id in copyMoveSelectedIds" :key="id">
+                                <div class="flex items-center gap-2 text-xs">
+                                    <span x-text="typeIcon(actions.find(a=>a._id===id)?.action_type)" class="text-base"></span>
+                                    <span class="text-slate-300 font-mono" x-text="actions.find(a=>a._id===id)?.name"></span>
+                                    <span class="text-slate-500" x-text="'(' + (actions.find(a=>a._id===id)?.action_type) + ')'"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <!-- Target script picker -->
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1.5">🎯 Script Tujuan</label>
+                        <select x-model.number="copyMoveTargetId" class="w-full bg-slate-900 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand">
+                            <option value="">-- Pilih script --</option>
+                            <template x-for="s in allScripts.filter(s => s.id !== scriptId)" :key="s.id">
+                                <option :value="s.id" x-text="s.name + ' (' + (s.action_count||0) + ' actions)'"></option>
+                            </template>
+                        </select>
+                        <p x-show="allScripts.filter(s=>s.id!==scriptId).length===0" class="text-xs text-slate-500 mt-1">Tidak ada script lain. Buat script baru dulu.</p>
+                    </div>
+                    <!-- Mode -->
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-2">⚙️ Mode</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button @click="copyMoveMode='copy'" :class="copyMoveMode==='copy' ? 'bg-brand text-white border-brand' : 'bg-slate-900 border-surface-border text-slate-400 hover:border-brand'" class="border rounded-xl p-3 text-sm font-medium transition-all text-center">
+                                <span class="text-xl block mb-1">📋</span> Copy
+                                <span class="text-xs block opacity-70">Duplikat ke script tujuan</span>
+                            </button>
+                            <button @click="copyMoveMode='move'" :class="copyMoveMode==='move' ? 'bg-warning text-slate-900 border-warning' : 'bg-slate-900 border-surface-border text-slate-400 hover:border-warning'" class="border rounded-xl p-3 text-sm font-medium transition-all text-center">
+                                <span class="text-xl block mb-1">✂️</span> Move
+                                <span class="text-xs block opacity-70">Pindahkan (hapus dari sini)</span>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Warning for move -->
+                    <div x-show="copyMoveMode==='move'" class="bg-warning/10 border border-warning/20 rounded-xl p-3">
+                        <p class="text-xs text-warning">⚠️ Mode <b>Move</b>: action akan <b>dihapus</b> dari script ini setelah dipindahkan. Pastikan sudah disimpan terlebih dahulu.</p>
+                    </div>
+                </div>
+                <div class="px-5 py-4 border-t border-surface-border flex items-center gap-3">
+                    <button @click="closeCopyMoveModal()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium rounded-lg px-4 py-2.5 transition-colors">Batal</button>
+                    <button @click="executeCopyMove()" :disabled="!copyMoveTargetId || copyMoveSelectedIds.length===0 || copyMoveLoading"
+                        :class="copyMoveMode==='move' ? 'bg-warning hover:bg-yellow-500 text-slate-900' : 'bg-brand hover:bg-brand-hover text-white'"
+                        class="flex-1 font-semibold text-sm rounded-lg px-4 py-2.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                        <span x-show="!copyMoveLoading" x-text="copyMoveMode==='move' ? '✂️ Move Sekarang' : '📋 Copy Sekarang'"></span>
+                        <span x-show="copyMoveLoading">⏳ Memproses...</span>
+                    </button>
+                </div>
+            </div>
         </div>
 
         <!-- Template Picker Modal (inside x-data) -->
@@ -661,6 +738,13 @@
             script: { name: '', description: '', repeat_count: 1, delay_between_ms: 1000, stop_on_failure: false },
             actions: [],
             _counter: 100,
+            // Copy/Move to script state
+            showCopyMoveModal: false,
+            copyMoveSelectedIds: [],
+            copyMoveTargetId: '',
+            copyMoveMode: 'copy',
+            copyMoveLoading: false,
+            allScripts: [],
             // Device resolution (fetched from /api/device/info); defaults to 1080x1920
             deviceResolution: { w: 1080, h: 1920 },
             actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app','read_sms','call_script','goto_script','toast'],
@@ -1071,7 +1155,83 @@
                 } else {
                     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
                 }
-            }
+            },
+
+            // ---- Copy/Move actions to another script ----
+            toggleCopyMoveSelect(actionId) {
+                const idx = this.copyMoveSelectedIds.indexOf(actionId);
+                if (idx === -1) {
+                    this.copyMoveSelectedIds.push(actionId);
+                } else {
+                    this.copyMoveSelectedIds.splice(idx, 1);
+                }
+            },
+            toggleSelectAll(event) {
+                if (event.target.checked) {
+                    this.copyMoveSelectedIds = this.actions.map(a => a._id);
+                } else {
+                    this.copyMoveSelectedIds = [];
+                }
+            },
+            async openCopyMoveModal(ids) {
+                this.copyMoveSelectedIds = [...ids];
+                this.copyMoveTargetId = '';
+                this.copyMoveMode = 'copy';
+                this.copyMoveLoading = false;
+                // Load all scripts for picker
+                try {
+                    const r = await fetch('/api/scripts');
+                    if (r.ok) this.allScripts = await r.json();
+                } catch(e) {
+                    this.allScripts = [];
+                }
+                this.showCopyMoveModal = true;
+            },
+            closeCopyMoveModal() {
+                this.showCopyMoveModal = false;
+            },
+            async executeCopyMove() {
+                if (!this.copyMoveTargetId || this.copyMoveSelectedIds.length === 0) return;
+                this.copyMoveLoading = true;
+                try {
+                    // We need the real DB ids of selected actions (saved ones)
+                    // For unsaved actions (no .id), warn user to save first
+                    const selectedActions = this.actions.filter(a => this.copyMoveSelectedIds.includes(a._id));
+                    const unsaved = selectedActions.filter(a => !a.id);
+                    if (unsaved.length > 0) {
+                        alert(`⚠️ ${unsaved.length} action belum disimpan. Simpan script dulu sebelum copy/move.`);
+                        this.copyMoveLoading = false;
+                        return;
+                    }
+                    const dbIds = selectedActions.map(a => a.id);
+                    const r = await fetch(`/api/scripts/${this.scriptId}/actions/copy-move`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            action_ids: dbIds,
+                            target_script_id: this.copyMoveTargetId,
+                            mode: this.copyMoveMode,
+                        })
+                    });
+                    if (!r.ok) {
+                        const err = await r.json();
+                        throw new Error(err.detail || 'Gagal');
+                    }
+                    const result = await r.json();
+                    const targetName = this.allScripts.find(s => s.id === this.copyMoveTargetId)?.name || this.copyMoveTargetId;
+                    if (this.copyMoveMode === 'move') {
+                        // Remove moved actions from local state
+                        this.actions = this.actions.filter(a => !this.copyMoveSelectedIds.includes(a._id));
+                        this.copyMoveSelectedIds = [];
+                    }
+                    this.showCopyMoveModal = false;
+                    alert(`✅ ${result.count} action berhasil di-${this.copyMoveMode === 'move' ? 'pindahkan ke' : 'copy ke'} script "${targetName}"`);
+                } catch(e) {
+                    alert('⚠️ Error: ' + e.message);
+                } finally {
+                    this.copyMoveLoading = false;
+                }
+            },
         };
     }
 </script>

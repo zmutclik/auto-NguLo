@@ -1,6 +1,9 @@
-import requests, time
+import requests, time, os
+from dotenv import load_dotenv
 
-API_KEY  = 'otpk_6c24f3c72e99a8ab6b9fafb45f6d4fc22103b97032090936'
+load_dotenv()
+
+API_KEY  = os.getenv('OTPINSTAN_API_KEY')
 BASE_URL = 'https://otpinstan.com/api/reseller'
 HEADERS  = {'X-Api-Key': API_KEY, 'Content-Type': 'application/json'}
 
@@ -43,7 +46,7 @@ else:
 #         print(f"OTP: {check['otp']}")
 #         exit()
 
-time.sleep(35)
+# time.sleep(35)
 print(api('s1/cancel.php', 'POST', {'order_id': 'S5-550204352'}))
 
 
