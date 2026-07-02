@@ -687,6 +687,28 @@ class ScriptExecutor:
 
         return re.sub(r"\$\{([a-zA-Z_]\w*(?:\.[^.}]+)*)\}", _resolve_single, text)
 
+    def _eval_expr(self, value: str) -> str:
+        """
+        Safely evaluate a simple arithmetic expression string (e.g. "0+1", "5*2-3").
+        Supports: +, -, *, /, //, %, ** and parentheses with integer/float operands.
+        Returns the result as a string, or the original value if it's not an expression.
+        """
+        stripped = value.strip()
+        # Only attempt eval if the string looks like an arithmetic expression
+        # (contains digits and at least one operator, no letters except 'e'/'E' for floats)
+        if not stripped:
+            return value
+        if re.fullmatch(r"[\d\s\+\-\*\/\%\(\)\.eE]+", stripped):
+            try:
+                result = eval(stripped, {"__builtins__": {}}, {})  # noqa: S307
+                # Return int string if result is a whole number
+                if isinstance(result, float) and result.is_integer():
+                    return str(int(result))
+                return str(result)
+            except Exception:
+                pass
+        return value
+
     # ---- Android input (real via ADB, or mock) ----
 
     async def _tap(self, x: float, y: float):
@@ -1598,6 +1620,7 @@ class ScriptExecutor:
                 vname = action.get("var_name", "")
                 vop = action.get("var_operation", "set")
                 vval = self._resolve_value(action.get("var_value", ""))
+                vval = self._eval_expr(vval)
                 if vop == "set":
                     self.variables[vname] = vval
                     self._log("info", f"  set ${vname} = {vval}")
