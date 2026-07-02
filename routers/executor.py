@@ -96,9 +96,11 @@ async def execute_script(script_id: int):
         current_log_id = log_id
         current_logs = log_entries
         goto_chain = []  # track visited script IDs to prevent infinite loops
+        inherited_vars: dict | None = None  # None = fresh start, dict = inherit dari goto_script
 
         while True:
-            result = await executor.execute(current_script, log_cb)
+            result = await executor.execute(current_script, log_cb, inherit_variables=inherited_vars)
+            inherited_vars = None  # reset setelah dipakai, agar tidak bocor ke iterasi berikutnya
 
             # Update the current execution_logs row
             final_status = result["status"]
@@ -123,13 +125,13 @@ async def execute_script(script_id: int):
                     new_log_id = new_log_cursor.lastrowid
                     await db.commit()
 
-                    # Build a new executor for the target script (resets internal state)
+                    # Build a new executor for the target script
                     new_exec = ScriptExecutor(mock_mode=use_mock)
                     new_exec.script_loader = executor.script_loader
-                    # Copy variables over so the target script inherits state
-                    new_exec.variables = dict(executor.variables)
                     new_exec.last_match_result = executor.last_match_result
                     _active_executors[new_log_id] = new_exec
+                    # Simpan variabel dari executor lama untuk diwariskan via inherit_variables
+                    inherited_vars = dict(executor.variables)
                     executor = new_exec
 
                     # Reset logs for the new script

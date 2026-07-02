@@ -1690,17 +1690,24 @@ class ScriptExecutor:
 
     # ---- Main executor ----
 
-    async def execute(self, script: dict, log_cb: Callable | None = None) -> dict:
+    async def execute(self, script: dict, log_cb: Callable | None = None,
+                       inherit_variables: dict | None = None) -> dict:
         """
         Execute all actions in a script. Returns summary dict.
         Supports goto_script: if _goto_target is set, returns a special
         result dict with _goto_target so the router can restart execution
         on the target script.
+
+        Args:
+            inherit_variables: If provided, start with these variables instead of
+                               empty dict. Used by goto_script chaining to share
+                               variables across scripts. Pass None for a fresh run.
         """
         self.log_callback = log_cb
         self._stop_requested = False
         self._goto_target = None
-        self.variables = {}
+        # Inherit variables from previous script (goto_script), or start fresh
+        self.variables = dict(inherit_variables) if inherit_variables is not None else {}
         self.last_match_result = None
 
         # Initialize serial for real mode
