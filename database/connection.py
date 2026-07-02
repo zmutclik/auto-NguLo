@@ -133,6 +133,7 @@ async def init_db():
     # ---- Migrations for new columns (safe to run multiple times) ----
     await _migrate_add_column(db, "actions", "call_script_name", "TEXT DEFAULT ''")
     await _migrate_add_column(db, "actions", "goto_script_name", "TEXT DEFAULT ''")
+    await _migrate_add_column(db, "actions", "enabled", "INTEGER DEFAULT 1")
     # Back-fill script names from old integer ID columns (one-time migration for existing data)
     await _migrate_backfill_script_names(db)
     await db.commit()

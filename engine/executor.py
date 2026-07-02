@@ -1464,6 +1464,12 @@ class ScriptExecutor:
             action_name = action.get("name", f"action_{idx}")
             action_type = action.get("action_type", "wait")
 
+            # Skip disabled actions
+            if action.get("enabled", 1) == 0 or action.get("enabled") is False:
+                self._log("info", f"  ⏭️ [{target_name}] [#{idx + 1}] {action_type} [{action_name}] SKIPPED (disabled)")
+                idx += 1
+                continue
+
             self._log("info", f"  📞 [{target_name}] ⚡ [#{idx + 1}] {action_type} [{action_name}]")
 
             # Wait before
@@ -1730,6 +1736,12 @@ class ScriptExecutor:
                 action = actions[idx]
                 action_name = action.get("name", f"action_{idx}")
                 action_type = action.get("action_type", "wait")
+
+                # Skip disabled actions
+                if action.get("enabled", 1) == 0 or action.get("enabled") is False:
+                    self._log("info", f"⏭️ [#{idx + 1}] {action_type} [{action_name}] SKIPPED (disabled)")
+                    idx += 1
+                    continue
 
                 self._current_action_idx = idx
                 self._log("info", f"⚡ [#{idx + 1}] {action_type} [{action_name}] executing...")

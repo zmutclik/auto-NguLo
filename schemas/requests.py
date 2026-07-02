@@ -93,6 +93,7 @@ class ActionCreate(BaseModel):
     toast_message: str = ""
     toast_duration: str = "short"
     # common
+    enabled: bool = True
     use_match_result: bool = False
     wait_ms: int = 1000
     wait_before_ms: int = 500
@@ -151,6 +152,7 @@ class ActionUpdate(BaseModel):
     toast_message: Optional[str] = None
     toast_duration: Optional[str] = None
     # common
+    enabled: Optional[bool] = None
     use_match_result: Optional[bool] = None
     wait_ms: Optional[int] = None
     wait_before_ms: Optional[int] = None

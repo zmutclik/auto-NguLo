@@ -87,19 +87,28 @@
         <div id="actions-list" class="space-y-3">
             <template x-for="(a, idx) in actions" :key="a._id">
                 <div :data-id="a._id" :class="copyMoveSelectedIds.includes(a._id) ? 'ring-2 ring-brand/60 border-brand/40' : 'border-surface-border'" class="action-card bg-surface-card border rounded-xl overflow-hidden group">
-                    <div class="flex items-center gap-3 p-4">
+                    <div class="flex items-center gap-3 p-4" :class="a.enabled === false ? 'opacity-50' : ''">
                         <!-- Checkbox pilih (selalu terlihat) -->
                         <span class="drag-handle text-slate-600 group-hover:text-slate-400 shrink-0"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h2v2H8V6zm6 0h2v2h-2V6zM8 11h2v2H8v-2zm6 0h2v2h-2v-2zm-6 5h2v2H8v-2zm6 0h2v2h-2v-2z"/></svg></span>
                         <input type="checkbox" :checked="copyMoveSelectedIds.includes(a._id)" @change.stop="toggleCopyMoveSelect(a._id)" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-brand focus:ring-brand shrink-0 cursor-pointer" title="Pilih action ini">
                         <span class="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-400 font-mono shrink-0" x-text="idx+1"></span>
                         <span x-text="typeIcon(a.action_type)" class="text-lg"></span>
                         <div class="flex-1 min-w-0 cursor-pointer" @click="a._expanded = !a._expanded">
-                            <span class="text-sm font-medium text-slate-200" x-text="a.name"></span>
+                            <span class="text-sm font-medium" :class="a.enabled === false ? 'line-through text-slate-500' : 'text-slate-200'" x-text="a.name"></span>
+                            <span x-show="a.enabled === false" class="ml-2 text-xs bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded font-medium">disabled</span>
                         </div>
+                        <!-- Enable/Disable switch -->
+                        <button @click.stop="a.enabled = a.enabled === false ? true : false"
+                            :title="a.enabled === false ? 'Aktifkan action ini' : 'Nonaktifkan action ini'"
+                            :class="a.enabled === false ? 'bg-slate-700/80' : 'bg-slate-600 shadow-[0_0_8px_2px_rgba(99,102,241,0.5)]'"
+                            class="shrink-0 relative inline-flex w-9 h-5 rounded-full transition-all duration-200 focus:outline-none border border-slate-600">
+                            <span :class="a.enabled === false ? 'translate-x-0.5 bg-slate-400' : 'translate-x-4 bg-indigo-300'"
+                                class="inline-block w-4 h-4 mt-0.5 rounded-full shadow transition-all duration-200"></span>
+                        </button>
                         <svg :class="a._expanded ? 'rotate-180' : ''" class="w-4 h-4 text-slate-500 transition-transform shrink-0 cursor-pointer" @click="a._expanded = !a._expanded" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                     </div>
 
-                    <div x-show="a._expanded" x-transition class="border-t border-surface-border bg-slate-900/50 px-4 py-4 animate-slide">
+                    <div x-show="a._expanded" x-transition class="border-t border-surface-border bg-slate-900/50 px-4 py-4 animate-slide" :class="a.enabled === false ? 'opacity-50 pointer-events-none select-none' : ''">
                         <div class="mb-3">
                             <label class="block text-xs font-medium text-slate-400 mb-1">Name <span class="text-slate-500">(lowercase_underscore)</span></label>
                             <input x-model="a.name" type="text" @input="a.name = a.name.toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/_+/g,'_')" @blur="a.name = a.name.replace(/^_+|_+$/g,'')" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand">
@@ -598,7 +607,18 @@
                         </div>
 
                         <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-700/50">
-                            <button @click.stop="openCopyMoveModal([a._id])" class="text-xs text-slate-500 hover:text-brand inline-flex items-center gap-1 transition-colors">📋 Copy/Move action ini</button>
+                            <div class="flex items-center gap-3">
+                                <button @click.stop="openCopyMoveModal([a._id])" class="text-xs text-slate-500 hover:text-brand inline-flex items-center gap-1 transition-colors">📋 Copy/Move action ini</button>
+                                <label class="inline-flex items-center gap-2 cursor-pointer select-none" @click.stop="">
+                                    <button @click.stop="a.enabled = a.enabled === false ? true : false"
+                                        :class="a.enabled === false ? 'bg-slate-700/80 border-slate-600' : 'bg-slate-600 border-slate-500 shadow-[0_0_8px_2px_rgba(99,102,241,0.5)]'"
+                                        class="relative inline-flex w-8 h-4 rounded-full transition-all duration-200 focus:outline-none shrink-0 border">
+                                        <span :class="a.enabled === false ? 'translate-x-0.5 bg-slate-400' : 'translate-x-4 bg-indigo-300'"
+                                            class="inline-block w-3 h-3 mt-0.5 rounded-full shadow transition-all duration-200"></span>
+                                    </button>
+                                    <span class="text-xs" :class="a.enabled === false ? 'text-slate-500' : 'text-slate-300'" x-text="a.enabled === false ? 'Disabled' : 'Enabled'"></span>
+                                </label>
+                            </div>
                             <button @click="deleteAction(idx)" class="text-xs text-slate-500 hover:text-danger inline-flex items-center gap-1">🗑️ Remove</button>
                         </div>
                     </div>
@@ -613,7 +633,7 @@
         </div>
 
         <div x-show="actions.length > 0" class="flex flex-wrap items-center justify-between gap-2 pt-2">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
                 <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
                     <input type="checkbox" @change="toggleSelectAll($event)" :checked="copyMoveSelectedIds.length === actions.length && actions.length > 0" class="w-3.5 h-3.5 rounded bg-slate-800 border-surface-border text-brand focus:ring-brand">
                     <span>Pilih Semua</span>
@@ -621,6 +641,21 @@
                 <button x-show="copyMoveSelectedIds.length > 0" @click="openCopyMoveModal(copyMoveSelectedIds)" class="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg px-3 py-2 transition-colors">
                     📋 Copy/Move (<span x-text="copyMoveSelectedIds.length"></span>)
                 </button>
+                <template x-if="copyMoveSelectedIds.length > 0">
+                    <div class="inline-flex items-center gap-1.5 bg-slate-800 border border-surface-border rounded-lg px-3 py-1.5">
+                        <span class="text-xs text-slate-400">Enable:</span>
+                        <button @click="bulkSetEnabled(true)"
+                            class="relative inline-flex w-8 h-4 rounded-full bg-slate-600 border border-slate-500 shadow-[0_0_8px_2px_rgba(99,102,241,0.5)] hover:shadow-[0_0_12px_3px_rgba(99,102,241,0.7)] transition-all focus:outline-none"
+                            title="Aktifkan semua yang dipilih">
+                            <span class="inline-block w-3 h-3 mt-0.5 translate-x-4 bg-indigo-300 rounded-full shadow transition-transform duration-200"></span>
+                        </button>
+                        <button @click="bulkSetEnabled(false)"
+                            class="relative inline-flex w-8 h-4 rounded-full bg-slate-700/80 border border-slate-600 hover:bg-slate-700 transition-all focus:outline-none"
+                            title="Nonaktifkan semua yang dipilih">
+                            <span class="inline-block w-3 h-3 mt-0.5 translate-x-0.5 bg-slate-400 rounded-full shadow transition-transform duration-200"></span>
+                        </button>
+                    </div>
+                </template>
             </div>
             <div class="flex items-center gap-2">
                 <button @click="addAction()" class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-sm font-semibold rounded-lg mx-2 px-2 py-2.5 transition-colors shadow-sm shadow-success/20">＋ Add Action</button>
@@ -937,6 +972,7 @@
                                 ...a,
                                 _id: ++this._counter,
                                 _expanded: false,
+                                enabled: a.enabled !== false,
                                 _custom_key: isCustomKey ? a.key_code : (a._custom_key || ''),
                                 key_code: isCustomKey ? 'CUSTOM' : (a.key_code || 'HOME'),
                                 // coordinate picker state
@@ -959,6 +995,7 @@
             addAction() {
                 this.actions.push({ _id: ++this._counter, _expanded: true, name: 'action_'+this._counter, action_type: 'tap', x:null,y:null,x2:null,y2:null,duration_ms:300,template_path:'',template_path2:'',match_threshold:0.8,retry_count:1,retry_delay_ms:1000,jump_on_success:'',jump_on_fail:'',match_region_x:null,match_region_y:null,match_region_w:null,match_region_h:null,key_code:'HOME',combo_action:'select_all',api_url:'',api_method:'GET',api_headers:'',api_body:'',api_save_to_var:'',var_name:'',var_operation:'set',var_value:'',text_content:'',text_speed_ms:50,wait_ms:1000,wait_before_ms:500,wait_after_ms:500,use_match_result:false,
                     // new action type defaults
+                    enabled: true,
                     jump_to:'',
                     condition_var:'', condition_op:'eq', condition_value:'', jump_on_true:'', jump_on_false:'',
                     orientation_value:'auto',
@@ -1020,6 +1057,7 @@
                         call_script_name: a.call_script_name || '', goto_script_name: a.goto_script_name || '',
                         toast_message: a.toast_message || '', toast_duration: a.toast_duration || 'short',
                         use_match_result: !!a.use_match_result,
+                        enabled: a.enabled !== false,
                         wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,
                         wait_after_ms: a.wait_after_ms,
                     };
@@ -1189,6 +1227,13 @@
             },
             closeCopyMoveModal() {
                 this.showCopyMoveModal = false;
+            },
+            bulkSetEnabled(state) {
+                this.actions.forEach(a => {
+                    if (this.copyMoveSelectedIds.includes(a._id)) {
+                        a.enabled = state;
+                    }
+                });
             },
             async executeCopyMove() {
                 if (!this.copyMoveTargetId || this.copyMoveSelectedIds.length === 0) return;
