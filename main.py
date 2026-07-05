@@ -16,6 +16,7 @@ from config import HOST, PORT, DEBUG, DATABASE_PATH, TEMPLATE_DIR
 from database.connection import init_db, close_db, get_db
 from middleware.auth_middleware import auth_middleware, get_token_from_request, verify_token
 from routers import auth, scripts, actions, executor, device
+from routers.executor import vars_router
 
 # ---- App Lifespan ----
 @asynccontextmanager
@@ -66,6 +67,7 @@ app.include_router(scripts.router)
 app.include_router(actions.router)
 app.include_router(executor.router)
 app.include_router(device.router)
+app.include_router(vars_router)
 
 
 # ===== PAGE ROUTES =====
@@ -118,6 +120,12 @@ async def settings_page(request: Request):
 async def gallery_page(request: Request):
     """Template gallery — view, upload, rename, delete template images."""
     return render_template("gallery.html", {"request": request, "title": "Gallery", "nav_active": "gallery"})
+
+
+@app.get("/variables", response_class=HTMLResponse)
+async def variables_page(request: Request):
+    """Global variable editor page."""
+    return render_template("variables.html", {"request": request, "title": "Variables", "nav_active": "variables"})
 
 
 @app.get("/logout")

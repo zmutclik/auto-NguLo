@@ -8,7 +8,36 @@ import os
 import time
 import re
 import tempfile
+import pathlib
+import threading
 from typing import Callable, Optional
+
+# ---- Global shared variable store (persisted to file) ----
+_GLOBAL_VARS_FILE = pathlib.Path("data/variables/global.json")
+_global_vars_lock = threading.Lock()
+
+
+def _load_global_vars() -> dict:
+    """Load global variables from JSON file. Returns empty dict if not found."""
+    try:
+        if _GLOBAL_VARS_FILE.exists():
+            return json.loads(_GLOBAL_VARS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_global_vars(variables: dict) -> None:
+    """Save global variables to JSON file (thread-safe)."""
+    try:
+        _GLOBAL_VARS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _global_vars_lock:
+            _GLOBAL_VARS_FILE.write_text(
+                json.dumps(variables, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+    except Exception:
+        pass
 
 # Image processing — OpenCV preferred (fast), Pillow+numpy as fallback for template matching
 import numpy as np
@@ -1729,8 +1758,10 @@ class ScriptExecutor:
         self.log_callback = log_cb
         self._stop_requested = False
         self._goto_target = None
-        # Inherit variables from previous script (goto_script), or start fresh
-        self.variables = dict(inherit_variables) if inherit_variables is not None else {}
+        # Load global shared variables from file, then overlay inherit_variables on top
+        self.variables = _load_global_vars()
+        if inherit_variables is not None:
+            self.variables.update(inherit_variables)
         self.last_match_result = None
 
         # Initialize serial for real mode
@@ -1878,5 +1909,9 @@ class ScriptExecutor:
         # Pass the goto target back to the router if set
         if self._goto_target is not None:
             result["_goto_target"] = self._goto_target
+
+        # Persist variables to global shared file so next script can continue
+        _save_global_vars(self.variables)
+        self._log("info", f"💾 Variables saved ({len(self.variables)} var) → {_GLOBAL_VARS_FILE}")
 
         return result

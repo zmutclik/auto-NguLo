@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Variables{% endblock %}
+
+{% block head_extra %}
+<style>
+    .var-row { transition: background 0.15s; }
+    .var-row:hover { background: #1e293b; }
+    .badge-type { font-size: 0.65rem; padding: 1px 6px; border-radius: 9999px; }
+    .json-val { color: #a78bfa; }
+    .str-val  { color: #34d399; }
+    .num-val  { color: #fb923c; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="varManager()" x-init="load()" class="space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-100">🗂️ Global Variables</h1>
+            <p class="text-slate-400 text-sm mt-1">Variable yang tersimpan di <code class="text-brand bg-brand/10 px-1 rounded">data/variables/global.json</code> — shared antar semua script</p>
+        </div>
+        <div class="flex gap-2">
+            <button @click="load()" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm font-medium transition-colors flex items-center gap-1">
+                <span x-text="loading ? '⏳' : '🔄'"></span> Refresh
+            </button>
+            <button @click="openAdd()" class="px-3 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm font-medium transition-colors">
+                ➕ Add Variable
+            </button>
+            <button @click="confirmClearAll()" class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg text-sm font-medium transition-colors border border-red-600/30">
+                🗑️ Clear All
+            </button>
+        </div>
+    </div>
+
+    <!-- Search + count -->
+    <div class="flex items-center gap-3">
+        <div class="relative flex-1 max-w-xs">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input x-model="search" type="text" placeholder="Filter variable..."
+                class="w-full pl-8 pr-3 py-2 bg-slate-800 border border-surface-border rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-brand">
+        </div>
+        <span class="text-slate-400 text-sm" x-text="`${filtered.length} variable`"></span>
+    </div>
+
+    <!-- Empty state -->
+    <template x-if="!loading && filtered.length === 0">
+        <div class="text-center py-16 text-slate-500">
+            <div class="text-5xl mb-3">📭</div>
+            <p class="text-lg font-medium" x-text="search ? 'Tidak ada variable yang cocok' : 'Belum ada variable tersimpan'"></p>
+            <p class="text-sm mt-1" x-text="search ? '' : 'Variable akan muncul di sini setelah script dijalankan'"></p>
+        </div>
+    </template>
+
+    <!-- Loading -->
+    <template x-if="loading">
+        <div class="text-center py-16 text-slate-500">
+            <div class="text-4xl mb-3 animate-spin">⏳</div>
+            <p>Memuat variable...</p>
+        </div>
+    </template>
+
+    <!-- Variable Table -->
+    <template x-if="!loading && filtered.length > 0">
+        <div class="bg-slate-800/50 border border-surface-border rounded-xl overflow-hidden">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-surface-border bg-slate-900/60">
+                        <th class="text-left px-4 py-3 text-slate-400 font-medium w-1/4">Key</th>
+                        <th class="text-left px-4 py-3 text-slate-400 font-medium">Value</th>
+                        <th class="text-left px-4 py-3 text-slate-400 font-medium w-20">Type</th>
+                        <th class="text-right px-4 py-3 text-slate-400 font-medium w-28">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="item in filtered" :key="item.key">
+                        <tr class="var-row border-b border-surface-border/50 last:border-0">
+                            <!-- Key -->
+                            <td class="px-4 py-3 font-mono text-brand font-medium" x-text="item.key"></td>
+
+                            <!-- Value preview -->
+                            <td class="px-4 py-3 max-w-0">
+                                <div class="truncate font-mono text-xs"
+                                     :class="item.typeClass"
+                                     :title="item.value"
+                                     x-text="item.preview"></div>
+                            </td>
+
+                            <!-- Type badge -->
+                            <td class="px-4 py-3">
+                                <span class="badge-type font-mono"
+                                      :class="item.badgeClass"
+                                      x-text="item.type"></span>
+                            </td>
+
+                            <!-- Actions -->
+                            <td class="px-4 py-3 text-right">
+                                <div class="flex items-center justify-end gap-1">
+                                    <button @click="openEdit(item)"
+                                        class="p-1.5 text-slate-400 hover:text-brand hover:bg-brand/10 rounded-lg transition-colors" title="Edit">
+                                        ✏️
+                                    </button>
+                                    <button @click="copyValue(item.value)"
+                                        class="p-1.5 text-slate-400 hover:text-green-400 hover:bg-green-400/10 rounded-lg transition-colors" title="Copy value">
+                                        📋
+                                    </button>
+                                    <button @click="deleteVar(item.key)"
+                                        class="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors" title="Delete">
+                                        🗑️
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </template>
+
+    <!-- JSON Viewer Modal (for JSON values) -->
+    <template x-if="jsonModal.show">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="jsonModal.show=false">
+            <div class="bg-slate-800 border border-surface-border rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+                    <h3 class="font-semibold text-slate-100">📄 <span x-text="jsonModal.key"></span></h3>
+                    <button @click="jsonModal.show=false" class="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+                </div>
+                <div class="overflow-auto p-4 flex-1">
+                    <pre class="text-xs text-purple-300 font-mono whitespace-pre-wrap break-all" x-text="jsonModal.formatted"></pre>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Edit / Add Modal -->
+    <template x-if="modal.show">
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="modal.show=false">
+            <div class="bg-slate-800 border border-surface-border rounded-xl w-full max-w-lg shadow-2xl">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+                    <h3 class="font-semibold text-slate-100" x-text="modal.isNew ? '➕ Add Variable' : '✏️ Edit Variable'"></h3>
+                    <button @click="modal.show=false" class="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <!-- Key -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Key</label>
+                        <input x-model="modal.key" type="text" placeholder="nama_variable"
+                            :readonly="!modal.isNew"
+                            :class="modal.isNew ? 'border-surface-border focus:border-brand' : 'border-surface-border bg-slate-900/50 cursor-not-allowed opacity-60'"
+                            class="w-full px-3 py-2 bg-slate-900 border rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none">
+                    </div>
+                    <!-- Value -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Value</label>
+                        <textarea x-model="modal.value" rows="6" placeholder='Nilai variable (string, angka, atau JSON)'
+                            class="w-full px-3 py-2 bg-slate-900 border border-surface-border rounded-lg text-sm text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-brand resize-y"></textarea>
+                        <p class="text-xs text-slate-500 mt-1">Tip: JSON akan otomatis dideteksi dan diformat</p>
+                    </div>
+                    <!-- Error -->
+                    <template x-if="modal.error">
+                        <p class="text-red-400 text-sm" x-text="modal.error"></p>
+                    </template>
+                </div>
+                <div class="flex justify-end gap-2 px-5 py-4 border-t border-surface-border">
+                    <button @click="modal.show=false" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm transition-colors">
+                        Batal
+                    </button>
+                    <button @click="saveVar()" :disabled="modal.saving"
+                        class="px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                        <span x-text="modal.saving ? 'Menyimpan...' : 'Simpan'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Toast notification -->
+    <div x-show="toast.show" x-transition
+        class="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl text-sm font-medium shadow-xl"
+        :class="toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'"
+        x-text="toast.message">
+    </div>
+
+</div>
+
+<script>
+function varManager() {
+    return {
+        vars: {},
+        loading: true,
+        search: '',
+        toast: { show: false, message: '', type: 'success' },
+        modal: { show: false, isNew: false, key: '', value: '', saving: false, error: '' },
+        jsonModal: { show: false, key: '', formatted: '' },
+
+        get filtered() {
+            const q = this.search.toLowerCase();
+            return Object.entries(this.vars)
+                .filter(([k, v]) => !q || k.toLowerCase().includes(q) || String(v).toLowerCase().includes(q))
+                .map(([k, v]) => this.buildItem(k, v));
+        },
+
+        buildItem(key, value) {
+            const str = String(value);
+            let type = 'string', typeClass = 'str-val', badgeClass = 'bg-green-500/20 text-green-400';
+            let preview = str;
+
+            // Detect type
+            if (str.trim().startsWith('{') || str.trim().startsWith('[')) {
+                type = 'json';
+                typeClass = 'json-val';
+                badgeClass = 'bg-purple-500/20 text-purple-400';
+                try {
+                    preview = JSON.stringify(JSON.parse(str));
+                } catch { preview = str; }
+            } else if (!isNaN(str) && str.trim() !== '') {
+                type = 'number';
+                typeClass = 'num-val';
+                badgeClass = 'bg-orange-500/20 text-orange-400';
+            }
+
+            return { key, value: str, preview, type, typeClass, badgeClass };
+        },
+
+        async load() {
+            this.loading = true;
+            try {
+                const r = await fetch('/api/variables');
+                this.vars = await r.json();
+            } catch (e) {
+                this.showToast('Gagal memuat variable: ' + e.message, 'error');
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        openAdd() {
+            this.modal = { show: true, isNew: true, key: '', value: '', saving: false, error: '' };
+        },
+
+        openEdit(item) {
+            // For JSON, pretty-print in editor
+            let val = item.value;
+            if (item.type === 'json') {
+                try { val = JSON.stringify(JSON.parse(val), null, 2); } catch {}
+            }
+            this.modal = { show: true, isNew: false, key: item.key, value: val, saving: false, error: '' };
+        },
+
+        async saveVar() {
+            const key = this.modal.key.trim();
+            const value = this.modal.value;
+            if (!key) { this.modal.error = 'Key tidak boleh kosong'; return; }
+            if (!/^[a-zA-Z_]\w*$/.test(key)) { this.modal.error = 'Key hanya boleh huruf, angka, dan underscore'; return; }
+
+            this.modal.saving = true;
+            this.modal.error = '';
+            try {
+                const r = await fetch(`/api/variables/${encodeURIComponent(key)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value }),
+                });
+                if (!r.ok) throw new Error(await r.text());
+                await this.load();
+                this.modal.show = false;
+                this.showToast(`Variable '${key}' disimpan ✅`, 'success');
+            } catch (e) {
+                this.modal.error = 'Gagal menyimpan: ' + e.message;
+            } finally {
+                this.modal.saving = false;
+            }
+        },
+
+        async deleteVar(key) {
+            if (!confirm(`Hapus variable '${key}'?`)) return;
+            try {
+                const r = await fetch(`/api/variables/${encodeURIComponent(key)}`, { method: 'DELETE' });
+                if (!r.ok) throw new Error(await r.text());
+                await this.load();
+                this.showToast(`Variable '${key}' dihapus`, 'success');
+            } catch (e) {
+                this.showToast('Gagal hapus: ' + e.message, 'error');
+            }
+        },
+
+        async confirmClearAll() {
+            const count = Object.keys(this.vars).length;
+            if (count === 0) { this.showToast('Tidak ada variable untuk dihapus', 'error'); return; }
+            if (!confirm(`Hapus semua ${count} variable? Tindakan ini tidak bisa dibatalkan.`)) return;
+            try {
+                await fetch('/api/variables', { method: 'DELETE' });
+                await this.load();
+                this.showToast('Semua variable dihapus 🗑️', 'success');
+            } catch (e) {
+                this.showToast('Gagal: ' + e.message, 'error');
+            }
+        },
+
+        copyValue(val) {
+            navigator.clipboard.writeText(val).then(() => {
+                this.showToast('Value disalin ke clipboard 📋', 'success');
+            });
+        },
+
+        showToast(message, type = 'success') {
+            this.toast = { show: true, message, type };
+            setTimeout(() => { this.toast.show = false; }, 3000);
+        },
+    };
+}
+</script>
+{% endblock %}
