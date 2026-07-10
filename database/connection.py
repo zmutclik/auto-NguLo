@@ -120,6 +120,7 @@ async def init_db():
             name            TEXT NOT NULL,
             layout_type     TEXT NOT NULL DEFAULT 'custom',
             keys_json       TEXT NOT NULL DEFAULT '{}',
+            screenshot_path TEXT DEFAULT '',
             created_at      TEXT DEFAULT (datetime('now')),
             updated_at      TEXT DEFAULT (datetime('now'))
         );
@@ -250,6 +251,7 @@ async def _migrate_backfill_script_names(db):
             name            TEXT NOT NULL,
             layout_type     TEXT NOT NULL DEFAULT 'custom',
             keys_json       TEXT NOT NULL DEFAULT '{}',
+            screenshot_path TEXT DEFAULT '',
             created_at      TEXT DEFAULT (datetime('now')),
             updated_at      TEXT DEFAULT (datetime('now'))
         );
@@ -261,6 +263,13 @@ async def _migrate_backfill_script_names(db):
             VALUES (2, 'Default Number', 'custom', '{}');
     """)
     await db.commit()
+
+    # Migrate: add screenshot_path column if not exists (v1.8+)
+    try:
+        await db.execute("ALTER TABLE keyboard_mappings ADD COLUMN screenshot_path TEXT DEFAULT ''")
+        await db.commit()
+    except Exception:
+        pass  # column already exists
 
 async def _migrate_keyboard_mappings_table(db):
     """Drop old CHECK constraint on layout_type by recreating the table (v1.7+).
@@ -291,14 +300,15 @@ async def _migrate_keyboard_mappings_table(db):
                 name            TEXT NOT NULL,
                 layout_type     TEXT NOT NULL DEFAULT 'custom',
                 keys_json       TEXT NOT NULL DEFAULT '{}',
+                screenshot_path TEXT DEFAULT '',
                 created_at      TEXT DEFAULT (datetime('now')),
                 updated_at      TEXT DEFAULT (datetime('now'))
             )
         """)
         # 2) Copy data
         await db.execute("""
-            INSERT INTO keyboard_mappings_new (id, name, layout_type, keys_json, created_at, updated_at)
-            SELECT id, name, layout_type, keys_json, created_at, updated_at FROM keyboard_mappings
+            INSERT INTO keyboard_mappings_new (id, name, layout_type, keys_json, screenshot_path, created_at, updated_at)
+            SELECT id, name, layout_type, keys_json, screenshot_path, created_at, updated_at FROM keyboard_mappings
         """)
         # 3) Drop old table
         await db.execute("DROP TABLE keyboard_mappings")

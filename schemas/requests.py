@@ -170,8 +170,10 @@ class KeyboardMappingCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     layout_type: str = Field(default="custom", min_length=1, max_length=40)
     keys_json: dict[str, dict] = Field(default={})  # {"a": {"x": 100, "y": 200}, ...}
+    screenshot_path: str = ""
 
 class KeyboardMappingUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=80)
     layout_type: Optional[str] = Field(None, min_length=1, max_length=40)
     keys_json: Optional[dict[str, dict]] = None
+    screenshot_path: Optional[str] = None

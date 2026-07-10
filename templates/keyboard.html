@@ -352,7 +352,7 @@
 <script>
     function keyboardEditor() {
         return {
-            allMappings: [],         // [{id, name, layout_type, keys_json, key_list, _screenshot_path}]
+            allMappings: [],         // [{id, name, layout_type, keys_json, key_list, screenshot_path}]
             currentMappingId: null,
             currentMapping: null,
             currentKeys: {},        // {char: {x, y}, ...}
@@ -402,14 +402,9 @@
                 try {
                     const r = await fetch('/api/keyboard');
                     const data = await r.json();
-                    // Restore screenshot paths from current state
-                    const oldPaths = {};
-                    for (const m of this.allMappings) {
-                        if (m._screenshot_path) oldPaths[m.id] = m._screenshot_path;
-                    }
                     this.allMappings = data.map(m => ({
                         ...m,
-                        _screenshot_path: oldPaths[m.id] || m._screenshot_path || '',
+                        screenshot_path: m.screenshot_path || '',
                     }));
 
                     // If current mapping still exists, stay on it; else pick first
@@ -442,7 +437,7 @@
                 this.currentMapping = mapping;
                 this.currentKeys = mapping.keys_json || {};
                 this.totalKeyList = mapping.key_list || [];
-                this.screenshotPath = mapping._screenshot_path || '';
+                this.screenshotPath = mapping.screenshot_path || '';
                 this.selectedChar = null;
                 this.pickX = null;
                 this.pickY = null;
@@ -658,14 +653,28 @@
                     const r = await fetch('/api/upload/template', { method: 'POST', body: form });
                     const data = await r.json();
                     this.screenshotPath = data.path;
-                    if (this.currentMapping) this.currentMapping._screenshot_path = data.path;
+                    if (this.currentMapping) this.currentMapping.screenshot_path = data.path;
+                    // Persist to backend
+                    await this.saveScreenshotPath(data.path);
                 } catch(e) { alert('Upload failed: ' + e); }
             },
 
             clearScreenshot() {
                 this.screenshotPath = '';
-                if (this.currentMapping) this.currentMapping._screenshot_path = '';
+                if (this.currentMapping) this.currentMapping.screenshot_path = '';
+                this.saveScreenshotPath('');
                 this.aiStatus = '';
+            },
+
+            async saveScreenshotPath(path) {
+                if (!this.currentMappingId) return;
+                try {
+                    await fetch(`/api/keyboard/${this.currentMappingId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ screenshot_path: path }),
+                    });
+                } catch(e) { console.error('Failed to save screenshot path:', e); }
             },
 
             async aiMapKeys() {
@@ -708,7 +717,8 @@
             confirmGalleryPick() {
                 if (!this.selectedGalleryImg) return;
                 this.screenshotPath = this.selectedGalleryImg;
-                if (this.currentMapping) this.currentMapping._screenshot_path = this.selectedGalleryImg;
+                if (this.currentMapping) this.currentMapping.screenshot_path = this.selectedGalleryImg;
+                this.saveScreenshotPath(this.selectedGalleryImg);
                 this.galleryOpen = false;
                 this.aiStatus = '';
             },

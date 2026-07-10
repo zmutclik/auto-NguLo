@@ -75,8 +75,8 @@ async def create_mapping(data: KeyboardMappingCreate):
     db = await get_db()
     keys_str = json.dumps(data.keys_json or {}, ensure_ascii=False)
     cursor = await db.execute(
-        "INSERT INTO keyboard_mappings (name, layout_type, keys_json) VALUES (?, ?, ?)",
-        (data.name, data.layout_type, keys_str),
+        "INSERT INTO keyboard_mappings (name, layout_type, keys_json, screenshot_path) VALUES (?, ?, ?, ?)",
+        (data.name, data.layout_type, keys_str, data.screenshot_path or ""),
     )
     await db.commit()
     return _row_to_dict(
@@ -103,6 +103,9 @@ async def update_mapping(mapping_id: int, data: KeyboardMappingUpdate):
     if data.keys_json is not None:
         set_parts.append("keys_json=?")
         values.append(json.dumps(data.keys_json, ensure_ascii=False))
+    if data.screenshot_path is not None:
+        set_parts.append("screenshot_path=?")
+        values.append(data.screenshot_path)
 
     if set_parts:
         set_parts.append("updated_at=datetime('now')")
