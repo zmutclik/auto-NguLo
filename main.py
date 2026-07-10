@@ -73,6 +73,11 @@ app.include_router(vars_router)
 
 # ===== PAGE ROUTES =====
 
+@app.get("/favicon.ico")
+async def favicon():
+    """Favicon — return empty response to prevent 404 noise."""
+    return JSONResponse(content="", status_code=204)
+
 @app.get("/", response_class=HTMLResponse)
 async def login_page(request: Request):
     """Login page."""

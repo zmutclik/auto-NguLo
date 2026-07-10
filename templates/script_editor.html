@@ -139,7 +139,7 @@
                                      @mouseup="endCoordPick(a, $event)"
                                      @touchend="endCoordPick(a, $event)"
                                      @contextmenu.prevent>
-                                    <img :src="'/static/' + a.template_path" class="w-full h-auto block select-none pointer-events-none" alt="Template preview" draggable="false"
+                                    <img :src="a.template_path ? '/static/' + a.template_path : ''" class="w-full h-auto block select-none pointer-events-none" alt="Template preview" draggable="false"
                                          @load="$el.parentElement._imgLoaded = true">
                                     <!-- Coordinate crosshair overlay -->
                                     <div x-show="a._pickX != null" class="absolute pointer-events-none" :style="'left:'+a._pickPctX+'%;top:'+a._pickPctY+'%'">
@@ -191,26 +191,28 @@
                                      @mouseup="endCoordPick(a, $event)"
                                      @touchend="endCoordPick(a, $event)"
                                      @contextmenu.prevent>
-                                    <img :src="'/static/' + a.template_path" class="w-full h-auto block select-none pointer-events-none" alt="Swipe template preview" draggable="false"
+                                    <img :src="a.template_path ? '/static/' + a.template_path : ''" class="w-full h-auto block select-none pointer-events-none" alt="Swipe template preview" draggable="false"
                                          @load="$el.parentElement._imgLoaded = true">
                                     <!-- Start point indicator -->
                                     <div x-show="a._pickX != null && !a._swiping" class="absolute pointer-events-none" :style="'left:'+a._pickPctX+'%;top:'+a._pickPctY+'%'">
                                         <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-success bg-success/20 shadow-lg shadow-success/40"></div>
                                     </div>
                                     <!-- Swipe line + endpoints -->
-                                    <div x-show="a._swiping && a._pickX != null" class="absolute pointer-events-none" style="left:0;top:0;width:100%;height:100%">
-                                        <svg class="absolute inset-0 w-full h-full" style="overflow:visible">
-                                            <line :x1="a._pickPctX+'%'" :y1="a._pickPctY+'%'" :x2="a._swipeCurPctX+'%'" :y2="a._swipeCurPctY+'%'" stroke="#6366F1" stroke-width="2" stroke-dasharray="6,3"/>
-                                        </svg>
-                                        <!-- Start marker -->
-                                        <div :style="'left:'+a._pickPctX+'%;top:'+a._pickPctY+'%'" class="absolute pointer-events-none">
-                                            <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-success bg-success/30 shadow-lg shadow-success/40"></div>
+                                    <template x-if="a._swiping && a._pickX != null">
+                                        <div class="absolute pointer-events-none" style="left:0;top:0;width:100%;height:100%">
+                                            <svg class="absolute inset-0 w-full h-full" style="overflow:visible">
+                                                <line :x1="a._pickPctX+'%'" :y1="a._pickPctY+'%'" :x2="a._swipeCurPctX+'%'" :y2="a._swipeCurPctY+'%'" stroke="#6366F1" stroke-width="2" stroke-dasharray="6,3"/>
+                                            </svg>
+                                            <!-- Start marker -->
+                                            <div :style="'left:'+a._pickPctX+'%;top:'+a._pickPctY+'%'" class="absolute pointer-events-none">
+                                                <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-success bg-success/30 shadow-lg shadow-success/40"></div>
+                                            </div>
+                                            <!-- End marker (current) -->
+                                            <div :style="'left:'+a._swipeCurPctX+'%;top:'+a._swipeCurPctY+'%'" class="absolute pointer-events-none">
+                                                <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-danger bg-danger/30 shadow-lg shadow-danger/40"></div>
+                                            </div>
                                         </div>
-                                        <!-- End marker (current) -->
-                                        <div :style="'left:'+a._swipeCurPctX+'%;top:'+a._swipeCurPctY+'%'" class="absolute pointer-events-none">
-                                            <div class="w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-danger bg-danger/30 shadow-lg shadow-danger/40"></div>
-                                        </div>
-                                    </div>
+                                    </template>
                                     <!-- Swipe result labels -->
                                     <div x-show="a._pickX != null && a._pickX2 != null" class="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1.5 rounded-lg font-mono pointer-events-none shadow-lg backdrop-blur-sm space-y-0.5">
                                         <div>🟢 From: X=<span x-text="a._pickX" class="text-success font-bold"></span> Y=<span x-text="a._pickY" class="text-success font-bold"></span></div>
@@ -251,7 +253,7 @@
                                      @mousedown.prevent="startMatchRegionDrag(a, $event)"
                                      @touchstart.prevent="startMatchRegionDrag(a, $event)"
                                      @contextmenu.prevent="clearMatchRegion(a)">
-                                    <img :src="'/static/' + a.template_path" class="w-full h-auto block select-none pointer-events-none" alt="Template preview" draggable="false">
+                                    <img :src="a.template_path ? '/static/' + a.template_path : ''" class="w-full h-auto block select-none pointer-events-none" alt="Template preview" draggable="false">
                                     <!-- Region rectangle overlay -->
                                     <div x-show="a._regionDragging || (a.match_region_x != null && a.match_region_w != null)"
                                          class="absolute pointer-events-none border-2 border-warning bg-warning/10 shadow-lg shadow-warning/20"
@@ -957,7 +959,11 @@
                         }
                     }
                 } catch(e) {
-                    console.warn('[scriptEditor] Could not fetch device resolution, using default 1080x1920:', e.message || e);
+                    if (e.name !== 'AbortError') {
+                        console.warn('[scriptEditor] Could not fetch device resolution, using default 1080x1920:', e.message || e);
+                    } else {
+                        console.warn('[scriptEditor] Device info request timed out, using default 1080x1920');
+                    }
                 }
             },
             async fetchKeyboardMappings() {
