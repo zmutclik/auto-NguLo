@@ -392,7 +392,13 @@
                     const r = await fetch('/api/device/info');
                     if (r.ok) {
                         const d = await r.json();
-                        this.deviceResolution = { w: d.width || 1080, h: d.height || 1920 };
+                        let w = d.width, h = d.height;
+                        // fallback: parse resolution string like "1080 × 1920"
+                        if (!w || !h) {
+                            const m = (d.resolution || '').match(/(\d+)\s*[×x]\s*(\d+)/);
+                            if (m) { w = parseInt(m[1]); h = parseInt(m[2]); }
+                        }
+                        if (w && h) this.deviceResolution = { w, h };
                     }
                 } catch(e) {}
                 await this.loadMappings();

@@ -90,7 +90,10 @@ async def device_info(request: Request):
                 if size:
                     match = re.search(r"(\d+)\s*[×x]\s*(\d+)", size)
                     if match:
-                        info["resolution"] = f"{match.group(1)} × {match.group(2)}"
+                        w, h = int(match.group(1)), int(match.group(2))
+                        info["resolution"] = f"{w} × {h}"
+                        info["width"] = w
+                        info["height"] = h
 
                 # --- Android version + API level ---
                 version = await _run_cmd(ADB_CMD, "-s", serial, "shell", "getprop", "ro.build.version.release")
