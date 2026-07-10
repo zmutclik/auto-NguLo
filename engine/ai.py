@@ -21,9 +21,21 @@ def _extract_json_object(text: str) -> dict | None:
     Extract a JSON object dict from arbitrary text using multiple strategies.
     Returns None if nothing valid found.
     """
+    import re
+
     text = text.strip()
     if not text:
         return None
+
+    # 0) Strip markdown code fences: ```json ... ``` or ``` ... ```
+    fence_match = re.match(r'```(?:json|JSON)?\s*\n(.*?)\n\s*```\s*$', text, re.DOTALL)
+    if not fence_match:
+        fence_match = re.match(r'```(?:json|JSON)?\s*(.*?)\s*```\s*$', text, re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    # Also handle single-backtick wrapping: `{...}`
+    if text.startswith("`") and text.endswith("`"):
+        text = text[1:-1].strip()
 
     # 1) Direct parse
     try:
@@ -35,8 +47,7 @@ def _extract_json_object(text: str) -> dict | None:
     # This handles cases like:
     #   {"keys": {...}} some trailing garbage
     #   Some prefix text {"keys": {...}}
-    import re
-    # Find first '{'
+    #   Truncated output: [model stops mid-JSON] — strip to last valid state
     start = text.find("{")
     if start >= 0:
         depth = 0
@@ -65,6 +76,52 @@ def _extract_json_object(text: str) -> dict | None:
                         return json.loads(candidate)
                     except json.JSONDecodeError:
                         break  # malformed, give up
+
+    # 3) Truncated JSON recovery: if max_tokens cut off the response, try to
+    #    salvage by closing unmatched braces/quotes and parsing.
+    if start >= 0:
+        truncated = text[start:]
+        # Count open vs close braces in truncated text
+        open_count = 0
+        close_count = 0
+        in_string = False
+        escape = False
+        for ch in truncated:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                open_count += 1
+            elif ch == "}":
+                close_count += 1
+
+        if open_count > close_count:
+            # Try to repair: add missing closing braces
+            # First, strip trailing incomplete element (e.g., halfway through a key/value)
+            repaired = truncated.rstrip()
+            # Remove trailing incomplete fragment after last comma
+            last_comma = repaired.rfind(",")
+            last_close = repaired.rfind("}")
+            if last_comma > last_close:
+                repaired = repaired[:last_comma]
+            # Add missing closing braces
+            repaired += "}" * (open_count - close_count)
+            # Close any unclosed string
+            if in_string:
+                repaired += '"'
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                pass
+
     return None
 
 
@@ -106,7 +163,10 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
 
     system_prompt = (
         "You are a computer vision assistant that analyzes screenshots of mobile keyboards. "
-        "Your task is to locate every visible key on the keyboard and return its center coordinates."
+        "Your task is to locate every visible key on the keyboard and return its center coordinates. "
+        "CRITICAL: You MUST output RAW JSON only — do NOT wrap it in ```json fences, "
+        "do NOT use markdown formatting, do NOT add any text before or after the JSON. "
+        "Your entire response must start with '{' and end with '}'."
     )
 
     user_prompt = (
@@ -160,7 +220,7 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
     payload = {
         "model": AI_MODEL,
         "messages": messages,
-        "max_tokens": 4096,
+        "max_tokens": 8192,
         "temperature": 0.1,
         "stream": False,
     }
