@@ -118,7 +118,7 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS keyboard_mappings (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             name            TEXT NOT NULL,
-            layout_type     TEXT NOT NULL DEFAULT 'qwerty' CHECK(layout_type IN ('qwerty', 'number')),
+            layout_type     TEXT NOT NULL DEFAULT 'custom',
             keys_json       TEXT NOT NULL DEFAULT '{}',
             created_at      TEXT DEFAULT (datetime('now')),
             updated_at      TEXT DEFAULT (datetime('now'))
@@ -147,6 +147,8 @@ async def init_db():
     await _migrate_add_column(db, "actions", "enabled", "INTEGER DEFAULT 1")
     # Back-fill script names from old integer ID columns (one-time migration for existing data)
     await _migrate_backfill_script_names(db)
+    # Migrate keyboard_mappings: drop old CHECK constraint (v1.7+)
+    await _migrate_keyboard_mappings_table(db)
     await db.commit()
 
 
@@ -241,12 +243,12 @@ async def _migrate_backfill_script_names(db):
     except Exception:
         pass  # column already exists
 
-    # ---- Create keyboard_mappings table (v1.6+) ----
+    # ---- Create keyboard_mappings table (v1.7+) ----
     await db.executescript("""
         CREATE TABLE IF NOT EXISTS keyboard_mappings (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             name            TEXT NOT NULL,
-            layout_type     TEXT NOT NULL DEFAULT 'qwerty' CHECK(layout_type IN ('qwerty', 'number')),
+            layout_type     TEXT NOT NULL DEFAULT 'custom',
             keys_json       TEXT NOT NULL DEFAULT '{}',
             created_at      TEXT DEFAULT (datetime('now')),
             updated_at      TEXT DEFAULT (datetime('now'))
@@ -254,11 +256,60 @@ async def _migrate_backfill_script_names(db):
 
         -- Seed default empty mappings if none exist
         INSERT OR IGNORE INTO keyboard_mappings (id, name, layout_type, keys_json)
-            VALUES (1, 'Default QWERTY', 'qwerty', '{}');
+            VALUES (1, 'Default QWERTY', 'custom', '{}');
         INSERT OR IGNORE INTO keyboard_mappings (id, name, layout_type, keys_json)
-            VALUES (2, 'Default Number', 'number', '{}');
+            VALUES (2, 'Default Number', 'custom', '{}');
     """)
     await db.commit()
+
+async def _migrate_keyboard_mappings_table(db):
+    """Drop old CHECK constraint on layout_type by recreating the table (v1.7+).
+    SQLite doesn't support ALTER TABLE DROP CONSTRAINT, so we must rebuild."""
+    try:
+        # Check if the old constraint still exists by checking the column type
+        cursor = await db.execute("PRAGMA table_info(keyboard_mappings)")
+        cols = await cursor.fetchall()
+        if not cols:
+            return  # table doesn't exist yet, will be created fresh later
+
+        # Try inserting a non-qwerty/number layout_type to see if constraint blocks it
+        try:
+            await db.execute("INSERT INTO keyboard_mappings (id, name, layout_type, keys_json) VALUES (999, '__test__', 'mycustom', '{}')")
+            # If success, no constraint anymore — clean up test row and return
+            await db.execute("DELETE FROM keyboard_mappings WHERE id=999")
+            await db.commit()
+            return
+        except Exception:
+            pass  # Constraint still blocks — need migration
+
+        # Rebuild table without the CHECK constraint
+        await db.execute("BEGIN TRANSACTION")
+        # 1) Create new table
+        await db.execute("""
+            CREATE TABLE keyboard_mappings_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT NOT NULL,
+                layout_type     TEXT NOT NULL DEFAULT 'custom',
+                keys_json       TEXT NOT NULL DEFAULT '{}',
+                created_at      TEXT DEFAULT (datetime('now')),
+                updated_at      TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        # 2) Copy data
+        await db.execute("""
+            INSERT INTO keyboard_mappings_new (id, name, layout_type, keys_json, created_at, updated_at)
+            SELECT id, name, layout_type, keys_json, created_at, updated_at FROM keyboard_mappings
+        """)
+        # 3) Drop old table
+        await db.execute("DROP TABLE keyboard_mappings")
+        # 4) Rename new table
+        await db.execute("ALTER TABLE keyboard_mappings_new RENAME TO keyboard_mappings")
+        await db.execute("COMMIT")
+    except Exception:
+        try:
+            await db.execute("ROLLBACK")
+        except Exception:
+            pass
 
 async def close_db():
     """Close the database connection."""

@@ -37,16 +37,40 @@
 
 <div id="keyboard-root" x-data="keyboardEditor()" x-init="init()">
 
-    <!-- Tab: QWERTY / Number -->
-    <div class="flex items-center gap-2 mb-6">
-        <button @click="switchTab('qwerty')" :class="activeTab==='qwerty' ? 'bg-brand text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">🔤 QWERTY Keyboard</button>
-        <button @click="switchTab('number')" :class="activeTab==='number' ? 'bg-brand text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">🔢 Number Keyboard</button>
+    <!-- Tab: Dynamic tabs for ALL mappings -->
+    <div class="flex flex-wrap items-center gap-1.5 mb-6">
+        <template x-for="m in allMappings" :key="m.id">
+            <div class="flex items-center">
+                <button @click="switchTab(m.id)"
+                    :class="currentMappingId === m.id ? 'bg-brand text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'"
+                    class="px-4 py-2 rounded-l-lg text-sm font-medium transition-colors">
+                    <span x-text="m.name"></span>
+                    <span class="text-xs opacity-60 ml-1">(<span x-text="Object.keys(m.keys_json||{}).length"></span>)</span>
+                </button>
+                <button @click.stop="openRenameModal(m)"
+                    class="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 px-2 py-2 text-xs transition-colors border-l border-slate-700"
+                    title="Rename">
+                    ✏️
+                </button>
+                <button @click.stop="deleteMapping(m)"
+                    class="bg-slate-800 hover:bg-red-900/50 text-slate-400 hover:text-danger px-2 py-2 rounded-r-lg text-xs transition-colors"
+                    title="Delete">
+                    ❌
+                </button>
+            </div>
+        </template>
+        <!-- Add new mapping button -->
+        <button @click="openCreateModal()"
+            class="bg-slate-800 hover:bg-brand/20 text-slate-400 hover:text-brand border border-dashed border-slate-600 hover:border-brand px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1">
+            ➕ New
+        </button>
     </div>
 
     <!-- Info bar -->
     <div class="flex flex-wrap items-center gap-3 mb-4">
         <span class="text-sm text-slate-400">📱 Device: <span x-text="deviceResolution.w+'×'+deviceResolution.h" class="text-slate-200 font-mono"></span></span>
         <span class="text-sm text-slate-400">🗺️ Mapped: <span x-text="mappedCount()" class="text-brand font-bold"></span>/<span x-text="totalKeyList.length"></span> keys</span>
+        <span class="text-sm text-slate-400">🏷️ Layout: <span x-text="currentMapping?.layout_type || 'custom'" class="text-slate-200 font-mono"></span></span>
         <span x-show="selectedChar" class="text-sm text-warning">🎯 Selected: "<span x-text="selectedChar" class="font-bold font-mono"></span>" <span class="text-slate-500">— tap/klik pada screenshot</span></span>
     </div>
 
@@ -183,6 +207,71 @@
         <span>✅</span> <span x-text="savedMsg"></span>
     </div>
 
+    <!-- ===== CREATE MAPPING MODAL ===== -->
+    <div x-show="createModalOpen" x-cloak
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+         @click.self="createModalOpen = false">
+        <div class="bg-surface-card border border-surface-border rounded-2xl overflow-hidden max-w-md w-full shadow-2xl"
+             @click.stop>
+            <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+                <h3 class="font-semibold text-slate-200">➕ New Keyboard Mapping</h3>
+                <button @click="createModalOpen = false" class="text-slate-400 hover:text-slate-200 text-xl leading-none">✕</button>
+            </div>
+            <div class="p-5 space-y-4">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Mapping Name</label>
+                    <input x-model="newMappingName" type="text"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand transition-all"
+                           placeholder="My Keyboard Layout">
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Layout Type (tag for key list)</label>
+                    <select x-model="newMappingType"
+                            class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand transition-all">
+                        <option value="custom">🗂️ Custom (empty template)</option>
+                        <option value="qwerty">🔤 QWERTY (full key set)</option>
+                        <option value="number">🔢 Number (digits only)</option>
+                    </select>
+                    <p class="text-[10px] text-slate-500 mt-1">"Custom" starts with no keys; "QWERTY"/"Number" pre-populate the key list.</p>
+                </div>
+            </div>
+            <div class="flex gap-3 justify-end px-5 py-4 border-t border-surface-border">
+                <button @click="createModalOpen = false" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors">Batal</button>
+                <button @click="createMapping()" :disabled="!newMappingName.trim()"
+                        class="px-5 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-semibold">
+                    ✅ Create
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== RENAME MODAL ===== -->
+    <div x-show="renameModalOpen" x-cloak
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+         @click.self="renameModalOpen = false">
+        <div class="bg-surface-card border border-surface-border rounded-2xl overflow-hidden max-w-md w-full shadow-2xl"
+             @click.stop>
+            <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
+                <h3 class="font-semibold text-slate-200">✏️ Rename Mapping</h3>
+                <button @click="renameModalOpen = false" class="text-slate-400 hover:text-slate-200 text-xl leading-none">✕</button>
+            </div>
+            <div class="p-5">
+                <label class="block text-xs text-slate-400 mb-1">New Name</label>
+                <input x-model="renameValue" type="text"
+                       class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand transition-all"
+                       @keyup.enter="confirmRename()"
+                       placeholder="New layout name">
+            </div>
+            <div class="flex gap-3 justify-end px-5 py-4 border-t border-surface-border">
+                <button @click="renameModalOpen = false" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors">Batal</button>
+                <button @click="confirmRename()" :disabled="!renameValue.trim()"
+                        class="px-5 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-semibold">
+                    ✅ Rename
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== GALLERY PICKER MODAL ===== -->
     <div x-show="galleryOpen" x-cloak
          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
@@ -263,14 +352,13 @@
 <script>
     function keyboardEditor() {
         return {
-            activeTab: 'qwerty',
-            qwertyMapping: null,   // {id, name, layout_type, keys_json: {...}, key_list: [...]}
-            numberMapping: null,
+            allMappings: [],         // [{id, name, layout_type, keys_json, key_list, _screenshot_path}]
             currentMappingId: null,
+            currentMapping: null,
             currentKeys: {},        // {char: {x, y}, ...}
             totalKeyList: [],       // ["q","w","e",...]
             screenshotPath: '',
-            selectedChar: null,     // currently selected key char
+            selectedChar: null,
             pickX: null,
             pickY: null,
             pickPctX: 0,
@@ -280,10 +368,8 @@
             saving: false,
             savedMsg: '',
             deviceResolution: { w: 1080, h: 1920 },
-            // AI mapping
             aiMapping: false,
             aiStatus: '',
-            // Screenshot img dims (set on load)
             imgW: 1080,
             imgH: 1920,
             // Gallery picker
@@ -292,9 +378,16 @@
             galleryImages: [],
             gallerySearch: '',
             selectedGalleryImg: null,
+            // Create modal
+            createModalOpen: false,
+            newMappingName: '',
+            newMappingType: 'custom',
+            // Rename modal
+            renameModalOpen: false,
+            renameTargetId: null,
+            renameValue: '',
 
             async init() {
-                // Fetch device resolution
                 try {
                     const r = await fetch('/api/device/info');
                     if (r.ok) {
@@ -302,8 +395,6 @@
                         this.deviceResolution = { w: d.width || 1080, h: d.height || 1920 };
                     }
                 } catch(e) {}
-
-                // Fetch keyboard mappings
                 await this.loadMappings();
             },
 
@@ -311,36 +402,52 @@
                 try {
                     const r = await fetch('/api/keyboard');
                     const data = await r.json();
-                    for (const m of data) {
-                        if (m.layout_type === 'qwerty') {
-                            this.qwertyMapping = m;
-                        } else if (m.layout_type === 'number') {
-                            this.numberMapping = m;
-                        }
+                    // Restore screenshot paths from current state
+                    const oldPaths = {};
+                    for (const m of this.allMappings) {
+                        if (m._screenshot_path) oldPaths[m.id] = m._screenshot_path;
                     }
-                    this.switchTab('qwerty');  // default
+                    this.allMappings = data.map(m => ({
+                        ...m,
+                        _screenshot_path: oldPaths[m.id] || m._screenshot_path || '',
+                    }));
+
+                    // If current mapping still exists, stay on it; else pick first
+                    if (this.allMappings.length > 0) {
+                        const stillExists = this.allMappings.find(m => m.id === this.currentMappingId);
+                        if (stillExists) {
+                            this.switchTabInternal(stillExists);
+                        } else {
+                            this.switchTabInternal(this.allMappings[0]);
+                        }
+                    } else {
+                        this.currentMappingId = null;
+                        this.currentMapping = null;
+                        this.currentKeys = {};
+                        this.totalKeyList = [];
+                        this.screenshotPath = '';
+                    }
                 } catch(e) {
                     console.error('Failed to load keyboard mappings:', e);
                 }
             },
 
-            switchTab(type) {
-                this.activeTab = type;
-                const mapping = type === 'qwerty' ? this.qwertyMapping : this.numberMapping;
-                if (mapping) {
-                    this.currentMappingId = mapping.id;
-                    this.currentKeys = mapping.keys_json || {};
-                    this.totalKeyList = mapping.key_list || [];
-                    this.screenshotPath = mapping._screenshot_path || '';
-                }
+            switchTab(mappingId) {
+                const m = this.allMappings.find(x => x.id === mappingId);
+                if (m) this.switchTabInternal(m);
+            },
+
+            switchTabInternal(mapping) {
+                this.currentMappingId = mapping.id;
+                this.currentMapping = mapping;
+                this.currentKeys = mapping.keys_json || {};
+                this.totalKeyList = mapping.key_list || [];
+                this.screenshotPath = mapping._screenshot_path || '';
                 this.selectedChar = null;
                 this.pickX = null;
                 this.pickY = null;
                 this.testResult = '';
-            },
-
-            getCurrentMapping() {
-                return this.activeTab === 'qwerty' ? this.qwertyMapping : this.numberMapping;
+                this.aiStatus = '';
             },
 
             get filteredGallery() {
@@ -356,42 +463,90 @@
                 return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + sizes[i];
             },
 
-            async openGalleryPicker() {
-                this.galleryOpen = true;
-                this.gallerySearch = '';
-                this.selectedGalleryImg = null;
-                this.galleryLoading = true;
+            // ── Create mapping ──
+            openCreateModal() {
+                this.newMappingName = '';
+                this.newMappingType = 'custom';
+                this.createModalOpen = true;
+            },
+
+            async createMapping() {
+                const name = this.newMappingName.trim();
+                if (!name) return;
                 try {
-                    const r = await fetch('/api/templates');
-                    const data = await r.json();
-                    this.galleryImages = data.templates || [];
+                    const r = await fetch('/api/keyboard', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, layout_type: this.newMappingType, keys_json: {} }),
+                    });
+                    if (!r.ok) throw new Error('Failed');
+                    const created = await r.json();
+                    this.createModalOpen = false;
+                    await this.loadMappings();
+                    // Switch to the new mapping
+                    this.switchTab(created.id);
+                    this.savedMsg = `Created "${created.name}"!`;
+                    setTimeout(() => { this.savedMsg = ''; }, 3000);
                 } catch(e) {
-                    console.error('Failed to load gallery:', e);
-                    this.galleryImages = [];
+                    alert('Gagal membuat mapping: ' + e);
                 }
-                this.galleryLoading = false;
             },
 
-            selectGalleryImage(img) {
-                this.selectedGalleryImg = img.path;
+            // ── Rename mapping ──
+            openRenameModal(mapping) {
+                this.renameTargetId = mapping.id;
+                this.renameValue = mapping.name || '';
+                this.renameModalOpen = true;
+                this.$nextTick(() => {
+                    const inp = document.querySelector('#keyboard-root input[placeholder="New layout name"]');
+                    if (inp) { inp.focus(); inp.select(); }
+                });
             },
 
-            confirmGalleryPick() {
-                if (!this.selectedGalleryImg) return;
-                this.screenshotPath = this.selectedGalleryImg;
-                const mapping = this.getCurrentMapping();
-                if (mapping) mapping._screenshot_path = this.selectedGalleryImg;
-                this.galleryOpen = false;
-                this.aiStatus = '';
+            async confirmRename() {
+                const name = this.renameValue.trim();
+                if (!name || !this.renameTargetId) return;
+                try {
+                    const r = await fetch(`/api/keyboard/${this.renameTargetId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name }),
+                    });
+                    if (!r.ok) throw new Error('Failed');
+                    this.renameModalOpen = false;
+                    await this.loadMappings();
+                    this.savedMsg = `Renamed to "${name}"!`;
+                    setTimeout(() => { this.savedMsg = ''; }, 3000);
+                } catch(e) {
+                    alert('Gagal rename: ' + e);
+                }
             },
 
+            // ── Delete mapping ──
+            async deleteMapping(mapping) {
+                if (!confirm(`Hapus mapping "${mapping.name}"? Data koordinat akan hilang.`)) return;
+                try {
+                    const r = await fetch(`/api/keyboard/${mapping.id}`, { method: 'DELETE' });
+                    if (!r.ok) {
+                        const d = await r.json();
+                        throw new Error(d.detail || 'Failed');
+                    }
+                    await this.loadMappings();
+                    this.savedMsg = `Deleted "${mapping.name}"`;
+                    setTimeout(() => { this.savedMsg = ''; }, 3000);
+                } catch(e) {
+                    alert('Gagal hapus: ' + e);
+                }
+            },
+
+            // ── Screenshot management ──
             mappedCount() {
                 return Object.keys(this.currentKeys).length;
             },
 
             selectKey(char) {
                 if (this.selectedChar === char) {
-                    this.selectedChar = null;  // deselect
+                    this.selectedChar = null;
                     this.testResult = '';
                     return;
                 }
@@ -399,8 +554,6 @@
                 this.pickX = null;
                 this.pickY = null;
                 this.testResult = '';
-
-                // If already mapped, show existing coords
                 if (this.currentKeys[char]) {
                     const c = this.currentKeys[char];
                     this.pickX = Math.round(c.x);
@@ -414,19 +567,12 @@
                 if (!this.imgW || this.imgW <= 0) return 50;
                 return Math.max(0, Math.min(100, (x / this.deviceResolution.w) * 100));
             },
-
             posToPctY(y) {
                 if (!this.imgH || this.imgH <= 0) return 50;
                 return Math.max(0, Math.min(100, (y / this.deviceResolution.h) * 100));
             },
-
-            pctToPosX(pct) {
-                return Math.round((pct / 100) * this.deviceResolution.w);
-            },
-
-            pctToPosY(pct) {
-                return Math.round((pct / 100) * this.deviceResolution.h);
-            },
+            pctToPosX(pct) { return Math.round((pct / 100) * this.deviceResolution.w); },
+            pctToPosY(pct) { return Math.round((pct / 100) * this.deviceResolution.h); },
 
             startCoordPick(evt) {
                 if (!this.selectedChar) return;
@@ -434,43 +580,32 @@
                 if (!img) return;
                 this.imgW = img.naturalWidth || img.clientWidth;
                 this.imgH = img.naturalHeight || img.clientHeight;
-
                 const rect = img.getBoundingClientRect();
                 const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
                 const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
-
                 let pctX = (clientX - rect.left) / rect.width * 100;
                 let pctY = (clientY - rect.top) / rect.height * 100;
                 pctX = Math.max(0, Math.min(100, pctX));
                 pctY = Math.max(0, Math.min(100, pctY));
-
                 const posX = this.pctToPosX(pctX);
                 const posY = this.pctToPosY(pctY);
-
                 this.pickX = posX;
                 this.pickY = posY;
                 this.pickPctX = pctX;
                 this.pickPctY = pctY;
-
-                // Save immediately
                 this.currentKeys[this.selectedChar] = { x: posX, y: posY };
-
-                // Save per-key to backend
                 this.saveSingleKey(this.selectedChar, posX, posY);
             },
 
             async saveSingleKey(char, x, y) {
+                if (!this.currentMappingId) return;
                 try {
-                    await fetch(`/api/keyboard/${this.currentMappingId}/keys?char=${encodeURIComponent(char)}&x=${x}&y=${y}`, {
-                        method: 'PUT',
-                    });
-                } catch(e) {
-                    console.error('Failed to save key:', e);
-                }
+                    await fetch(`/api/keyboard/${this.currentMappingId}/keys?char=${encodeURIComponent(char)}&x=${x}&y=${y}`, { method: 'PUT' });
+                } catch(e) { console.error('Failed to save key:', e); }
             },
 
             async testTap() {
-                if (!this.testChar) return;
+                if (!this.testChar || !this.currentMappingId) return;
                 const char = this.testChar;
                 if (!this.currentKeys[char]) {
                     this.testResult = '❌ Key tidak ditemukan di mapping';
@@ -478,21 +613,14 @@
                 }
                 this.testResult = '⏳ Tapping...';
                 try {
-                    const r = await fetch(`/api/keyboard/${this.currentMappingId}/test-tap?char=${encodeURIComponent(char)}`, {
-                        method: 'POST',
-                    });
+                    const r = await fetch(`/api/keyboard/${this.currentMappingId}/test-tap?char=${encodeURIComponent(char)}`, { method: 'POST' });
                     const data = await r.json();
-                    if (data.success) {
-                        this.testResult = `✅ Tapped "${char}" at (${data.x}, ${data.y})`;
-                    } else {
-                        this.testResult = `❌ Failed: ${data.error || 'unknown'}`;
-                    }
-                } catch(e) {
-                    this.testResult = '❌ Network error';
-                }
+                    this.testResult = data.success ? `✅ Tapped "${char}" at (${data.x}, ${data.y})` : `❌ Failed: ${data.error || 'unknown'}`;
+                } catch(e) { this.testResult = '❌ Network error'; }
             },
 
             async saveMapping() {
+                if (!this.currentMappingId) return;
                 this.saving = true;
                 try {
                     const r = await fetch(`/api/keyboard/${this.currentMappingId}`, {
@@ -502,22 +630,18 @@
                     });
                     if (r.ok) {
                         const updated = await r.json();
-                        this.savedMsg = `Saved! ${this.mappedCount()} keys mapped`;
-                        if (this.activeTab === 'qwerty') {
-                            this.qwertyMapping = { ...this.qwertyMapping, keys_json: updated.keys_json };
-                        } else {
-                            this.numberMapping = { ...this.numberMapping, keys_json: updated.keys_json };
+                        if (this.currentMapping) {
+                            this.currentMapping.keys_json = updated.keys_json || this.currentKeys;
                         }
+                        this.savedMsg = `Saved! ${this.mappedCount()} keys mapped`;
                         setTimeout(() => { this.savedMsg = ''; }, 3000);
                     }
-                } catch(e) {
-                    alert('Failed to save: ' + e);
-                }
+                } catch(e) { alert('Failed to save: ' + e); }
                 this.saving = false;
             },
 
             resetMapping() {
-                if (!confirm(`Hapus SEMUA mapping key untuk ${this.activeTab === 'qwerty' ? 'QWERTY' : 'Number'} keyboard?`)) return;
+                if (!confirm(`Hapus SEMUA mapping key untuk "${this.currentMapping?.name || 'layout ini'}"?`)) return;
                 this.currentKeys = {};
                 this.selectedChar = null;
                 this.pickX = null;
@@ -534,46 +658,59 @@
                     const r = await fetch('/api/upload/template', { method: 'POST', body: form });
                     const data = await r.json();
                     this.screenshotPath = data.path;
-                    // Store screenshot path in mapping (we'll store it locally only, not in DB)
-                    const mapping = this.getCurrentMapping();
-                    if (mapping) mapping._screenshot_path = data.path;
-                } catch(e) {
-                    alert('Upload failed: ' + e);
-                }
+                    if (this.currentMapping) this.currentMapping._screenshot_path = data.path;
+                } catch(e) { alert('Upload failed: ' + e); }
             },
 
             clearScreenshot() {
                 this.screenshotPath = '';
-                const mapping = this.getCurrentMapping();
-                if (mapping) mapping._screenshot_path = '';
+                if (this.currentMapping) this.currentMapping._screenshot_path = '';
                 this.aiStatus = '';
             },
 
             async aiMapKeys() {
-                if (!this.screenshotPath) {
-                    this.aiStatus = '❌ Upload screenshot dulu';
-                    return;
-                }
+                if (!this.screenshotPath) { this.aiStatus = '❌ Upload screenshot dulu'; return; }
+                if (!this.currentMappingId) return;
                 this.aiMapping = true;
                 this.aiStatus = '⏳ Mengirim ke AI...';
                 try {
-                    const r = await fetch(`/api/keyboard/${this.currentMappingId}/ai-map?image_path=${encodeURIComponent(this.screenshotPath)}`, {
-                        method: 'POST',
-                    });
+                    const r = await fetch(`/api/keyboard/${this.currentMappingId}/ai-map?image_path=${encodeURIComponent(this.screenshotPath)}`, { method: 'POST' });
                     const data = await r.json();
                     if (data.success) {
                         this.currentKeys = data.keys || {};
                         this.aiStatus = `✅ AI berhasil mapping ${data.total_keys || Object.keys(data.keys || {}).length} keys!`;
-                        // Refresh the mapping from server
                         await this.loadMappings();
-                        this.switchTab(this.activeTab);
+                        // Re-select current after reload
+                        const m = this.allMappings.find(x => x.id === this.currentMappingId);
+                        if (m) this.switchTabInternal(m);
                     } else {
                         this.aiStatus = `❌ Gagal: ${data.error || 'unknown'}`;
                     }
-                } catch(e) {
-                    this.aiStatus = `❌ Error: ${e.message || e}`;
-                }
+                } catch(e) { this.aiStatus = `❌ Error: ${e.message || e}`; }
                 this.aiMapping = false;
+            },
+
+            async openGalleryPicker() {
+                this.galleryOpen = true;
+                this.gallerySearch = '';
+                this.selectedGalleryImg = null;
+                this.galleryLoading = true;
+                try {
+                    const r = await fetch('/api/templates');
+                    const data = await r.json();
+                    this.galleryImages = data.templates || [];
+                } catch(e) { console.error('Failed to load gallery:', e); this.galleryImages = []; }
+                this.galleryLoading = false;
+            },
+
+            selectGalleryImage(img) { this.selectedGalleryImg = img.path; },
+
+            confirmGalleryPick() {
+                if (!this.selectedGalleryImg) return;
+                this.screenshotPath = this.selectedGalleryImg;
+                if (this.currentMapping) this.currentMapping._screenshot_path = this.selectedGalleryImg;
+                this.galleryOpen = false;
+                this.aiStatus = '';
             },
         };
     }

@@ -29,8 +29,7 @@ def _get_key_map(layout_type: str) -> list[str]:
             "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
             ".", ",", "ENTER", "BACKSPACE",
         ]
-    else:
-        # QWERTY layout
+    elif layout_type == "qwerty":
         return [
             "q", "w", "e", "r", "t", "y", "u", "i", "o", "p",
             "a", "s", "d", "f", "g", "h", "j", "k", "l",
@@ -41,6 +40,9 @@ def _get_key_map(layout_type: str) -> list[str]:
             "/", "\\", ":", ";", "'", "\"", "(", ")", "[", "]", "{", "}",
             "<", ">", "|", "~", "`", "^",
         ]
+    else:
+        # Custom/unknown layout — no pre-populated keys
+        return []
 
 
 @router.get("")
@@ -50,7 +52,7 @@ async def list_mappings():
     cursor = await db.execute("SELECT * FROM keyboard_mappings ORDER BY layout_type, id")
     rows = [_row_to_dict(r) for r in await cursor.fetchall()]
     for r in rows:
-        r["key_list"] = _get_key_map(r.get("layout_type", "qwerty"))
+        r["key_list"] = _get_key_map(r.get("layout_type", "custom"))
     return rows
 
 
@@ -63,7 +65,7 @@ async def get_mapping(mapping_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Keyboard mapping not found")
     result = _row_to_dict(row)
-    result["key_list"] = _get_key_map(result.get("layout_type", "qwerty"))
+    result["key_list"] = _get_key_map(result.get("layout_type", "custom"))
     return result
 
 
@@ -218,18 +220,19 @@ async def test_tap_key(mapping_id: int, char: str):
 
 @router.delete("/{mapping_id}")
 async def delete_mapping(mapping_id: int):
-    """Delete a keyboard mapping (only custom mappings, not the 2 defaults)."""
+    """Delete a keyboard mapping."""
     db = await get_db()
     cursor = await db.execute("SELECT id FROM keyboard_mappings WHERE id=?", (mapping_id,))
     if not await cursor.fetchone():
         raise HTTPException(status_code=404, detail="Keyboard mapping not found")
 
-    # Don't allow deleting the default seeded mappings (id 1 = QWERTY, id 2 = Number)
-    if mapping_id in (1, 2):
-        raise HTTPException(status_code=400, detail="Cannot delete default mappings. Clear their keys instead.")
-
     await db.execute("DELETE FROM keyboard_mappings WHERE id=?", (mapping_id,))
     await db.commit()
+
+    # Clear cache for this mapping
+    from engine.keyboard_cache import clear_keyboard_cache
+    clear_keyboard_cache(mapping_id)
+
     return {"message": "Mapping deleted"}
 
 
