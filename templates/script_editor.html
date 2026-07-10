@@ -971,7 +971,7 @@
                 // Fetch device resolution first (non-blocking, but before any coordinate picks)
                 await this.fetchDeviceResolution();
                 // Fetch keyboard mappings for type_text keyboard tap mode
-                this.fetchKeyboardMappings();
+                await this.fetchKeyboardMappings();
                 // Check for script_id from template variable first, then fallback to ?id= query param
                 const templateId = document.getElementById('script-editor-root')?.dataset?.scriptId;
                 if (templateId) {
