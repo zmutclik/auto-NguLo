@@ -409,7 +409,10 @@
                             <div><label class="text-xs text-slate-500">Speed (ms/char)</label><input x-model.number="a.text_speed_ms" type="number" min="10" max="1000" step="10" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
                             <div>
                                 <label class="text-xs text-slate-500">⌨️ Keyboard Mapping <span class="text-slate-600">(tap mode)</span></label>
-                                <select :value="a.keyboard_mapping_id != null ? a.keyboard_mapping_id : ''" @change="a.keyboard_mapping_id = $event.target.value ? Number($event.target.value) : null" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100">
+                                <select
+                                    x-init="const kmId = a.keyboard_mapping_id; if (kmId != null) { $nextTick(() => { $el.value = kmId; }); }"
+                                    @change="a.keyboard_mapping_id = $event.target.value ? Number($event.target.value) : null"
+                                    class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100">
                                     <option value="">None — ADB input text (fast key inject)</option>
                                     <template x-for="km in keyboardMappings" :key="km.id">
                                         <option :value="km.id" x-text="km.name + ' (' + km.layout_type + ', ' + (Object.keys(km.keys_json||{}).length || 0) + ' keys)'"></option>
