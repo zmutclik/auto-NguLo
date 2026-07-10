@@ -208,7 +208,11 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
 
     # Extract the assistant's message
     try:
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+        content = message.get("content", "") or ""
+        # Some reasoning models (e.g., deepseek-r1) put their output in
+        # `reasoning_content` and leave `content` empty.
+        reasoning = message.get("reasoning_content", "") or ""
     except (KeyError, IndexError, TypeError) as e:
         return {
             "success": False,
@@ -217,10 +221,36 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
             "raw_response": json.dumps(data, ensure_ascii=False)[:2000],
         }
 
+    # Check if the model complained about missing vision support
+    no_vision_clues = [
+        "no vision support", "image omitted", "cannot see",
+        "can't see the image", "unable to view", "not a vision model",
+        "no image provided", "can't analyze", "cannot analyze",
+    ]
+    combined = (reasoning + " " + content).lower()
+    for clue in no_vision_clues:
+        if clue in combined:
+            return {
+                "success": False,
+                "error": (
+                    f"Model '{AI_MODEL}' tidak mendukung vision (image analysis). "
+                    f"Ganti ke model vision seperti: gpt-4o, claude-3.5-sonnet, "
+                    f"gemini-2.0-flash, atau qwen-vl-max."
+                ),
+                "keys": {},
+                "raw_response": (reasoning + content)[:500],
+            }
+
+    # Use reasoning_content as fallback if content is empty
+    if not content.strip() and reasoning.strip():
+        content = reasoning
+
     if not content or not content.strip():
         return {
             "success": False,
-            "error": f"AI returned empty response. Full response: {json.dumps(data, ensure_ascii=False)[:2000]}",
+            "error": f"AI returned empty response. "
+                      f"Model mungkin tidak mendukung vision. Ganti ke model vision-capable. "
+                      f"Response: {json.dumps(data, ensure_ascii=False)[:500]}",
             "keys": {},
             "raw_response": "",
         }
