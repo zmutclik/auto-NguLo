@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from config import HOST, PORT, DEBUG, DATABASE_PATH, TEMPLATE_DIR
 from database.connection import init_db, close_db, get_db
 from middleware.auth_middleware import auth_middleware, get_token_from_request, verify_token
-from routers import auth, scripts, actions, executor, device
+from routers import auth, scripts, actions, executor, device, keyboard
 from routers.executor import vars_router
 
 # ---- App Lifespan ----
@@ -67,6 +67,7 @@ app.include_router(scripts.router)
 app.include_router(actions.router)
 app.include_router(executor.router)
 app.include_router(device.router)
+app.include_router(keyboard.router)
 app.include_router(vars_router)
 
 
@@ -126,6 +127,11 @@ async def gallery_page(request: Request):
 async def variables_page(request: Request):
     """Global variable editor page."""
     return render_template("variables.html", {"request": request, "title": "Variables", "nav_active": "variables"})
+
+@app.get("/keyboard", response_class=HTMLResponse)
+async def keyboard_page(request: Request):
+    """Keyboard mapping editor page."""
+    return render_template("keyboard.html", {"request": request, "title": "Keyboard Mapping", "nav_active": "keyboard"})
 
 
 @app.get("/logout")

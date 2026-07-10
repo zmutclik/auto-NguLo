@@ -12,6 +12,10 @@ import pathlib
 import threading
 from typing import Callable, Optional
 
+# Keyboard mapping cache: loaded from DB once and cached
+_keyboard_mapping_cache: dict[int, dict] = {}  # mapping_id → keys dict
+_keyboard_mapping_cache_lock = threading.Lock()
+
 # ---- Global shared variable store (persisted to file) ----
 _GLOBAL_VARS_FILE = pathlib.Path("data/variables/global.json")
 _global_vars_lock = threading.Lock()
@@ -487,6 +491,35 @@ async def _sendevent_tap(serial: str | None, x: int, y: int):
     await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
     await asyncio.sleep(0.03)
 
+async def _sendevent_long_press(serial: str | None, x: int, y: int, duration_ms: int = 500):
+    """
+    Inject a long press at (x, y) using sendevent — touch down, hold, then touch up.
+    Unlike `input swipe X Y X Y DURATION` (which many Android devices treat as a tap),
+    this properly holds the touch for the full duration.
+    """
+    dev = _device_touch_event
+    if not dev:
+        raise RuntimeError("No touchscreen device found for sendevent")
+
+    abs_x = max(0, min(x, _device_max_x))
+    abs_y = max(0, min(y, _device_max_y))
+
+    # Touch down
+    await _send_event_cmd(serial, dev, 3, 57, 0)        # ABS_MT_TRACKING_ID
+    await _send_event_cmd(serial, dev, 3, 53, abs_x)     # ABS_MT_POSITION_X
+    await _send_event_cmd(serial, dev, 3, 54, abs_y)     # ABS_MT_POSITION_Y
+    await _send_event_cmd(serial, dev, 1, 330, 1)        # BTN_TOUCH down
+    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
+
+    # Hold for the specified duration
+    await asyncio.sleep(duration_ms / 1000)
+
+    # Touch up
+    await _send_event_cmd(serial, dev, 3, 57, -1)       # ABS_MT_TRACKING_ID (end)
+    await _send_event_cmd(serial, dev, 1, 330, 0)        # BTN_TOUCH up
+    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
+    await asyncio.sleep(0.03)
+
 async def _sendevent_swipe(serial: str | None, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300):
     """
     Inject a swipe gesture using sendevent with linear interpolation.
@@ -575,7 +608,11 @@ async def _run_adb_input(serial: str | None, *input_args, timeout: float = 5.0) 
         elif input_args[0] == "swipe":
             x1, y1, x2, y2 = int(input_args[1]), int(input_args[2]), int(input_args[3]), int(input_args[4])
             duration_ms = int(input_args[5]) if len(input_args) > 5 else 300
-            await _sendevent_swipe(serial, x1, y1, x2, y2, duration_ms)
+            # Detect long press: when swipe is from a point to (nearly) the same point
+            if abs(x1 - x2) <= 1 and abs(y1 - y2) <= 1 and duration_ms > 100:
+                await _sendevent_long_press(serial, x1, y1, duration_ms)
+            else:
+                await _sendevent_swipe(serial, x1, y1, x2, y2, duration_ms)
             return ""
 
     # Strategy 4: Give up with helpful error
@@ -765,9 +802,11 @@ class ScriptExecutor:
             await asyncio.sleep(duration_ms / 1000 * 0.1)
         else:
             self._log("info", f"  👆 long_press({x:.0f}, {y:.0f}) {duration_ms}ms")
-            # Swipe from point to same point = long press
+            # Offset end coordinate by 1 pixel — Android ignores duration when start==end
+            # and treats it as a tap. A 1px offset is imperceptible but forces a proper swipe.
+            end_x = int(x) + 1
             await _run_adb_input(self._serial, "swipe",
-                str(int(x)), str(int(y)), str(int(x)), str(int(y)), str(int(duration_ms)))
+                str(int(x)), str(int(y)), str(end_x), str(int(y)), str(int(duration_ms)))
             await asyncio.sleep(duration_ms / 1000)
 
     async def _push_key(self, key_code: str):
@@ -1181,32 +1220,124 @@ class ScriptExecutor:
             self._log("error", f"  API call failed: {e}")
             return ""
 
-    async def _type_text(self, text: str, speed_ms: int):
+    async def _type_text(self, text: str, speed_ms: int, keyboard_mapping_id: int | None = None):
+        """
+        Type text on the device.
+        
+        If keyboard_mapping_id is set: tap each character using the mapped coordinates
+        (e.g., for on-screen keyboard). Keys not found in the mapping are skipped with a warning.
+        
+        If keyboard_mapping_id is None: fallback to ADB `input text` (legacy behavior).
+        """
         resolved = self._resolve_value(text)
+        delay_per_char = speed_ms / 1000.0  # seconds
+
+        # ---- Keyboard mapping tap mode ----
+        if keyboard_mapping_id is not None:
+            # Load mapping keys
+            keys_map = await self._load_keyboard_mapping(keyboard_mapping_id)
+            if not keys_map:
+                self._log("warn", f"  ⌨️  Keyboard mapping #{keyboard_mapping_id} is empty, no keys defined")
+                return
+
+            if self.mock_mode:
+                self._log("info", f"  [mock] type_text via keyboard map #{keyboard_mapping_id}: {len(resolved)} chars, {speed_ms}ms/char")
+                for ch in resolved:
+                    coord = keys_map.get(ch)
+                    if coord:
+                        self._log("info", f"  [mock]   tap '{ch}' → ({coord['x']:.0f}, {coord['y']:.0f})")
+                    else:
+                        upp = ch.upper()
+                        coord = keys_map.get(upp)
+                        if coord:
+                            self._log("info", f"  [mock]   tap upper '{upp}' (for '{ch}') → ({coord['x']:.0f}, {coord['y']:.0f})")
+                        else:
+                            self._log("warn", f"  [mock]   SKIP '{ch}' (not mapped)")
+                await asyncio.sleep(len(resolved) * delay_per_char * 0.05)
+                return
+
+            self._log("info", f"  ⌨️  type_text via keyboard map #{keyboard_mapping_id}: {len(resolved)} chars @ {speed_ms}ms/char")
+            skipped = 0
+            for ch in resolved:
+                if self._stop_requested:
+                    return
+                coord = keys_map.get(ch)
+                if not coord:
+                    # Try uppercase variant (user may have mapped uppercase only)
+                    upp = ch.upper()
+                    coord = keys_map.get(upp)
+                    if coord:
+                        self._log("info", f"  ⌨️   tapping upper '{upp}' for '{ch}'")
+                if coord:
+                    await self._tap(coord["x"], coord["y"])
+                else:
+                    self._log("warn", f"  ⌨️   SKIP '{ch}' — not mapped in keyboard layout #{keyboard_mapping_id}")
+                    skipped += 1
+                if delay_per_char > 0:
+                    await asyncio.sleep(delay_per_char)
+            if skipped:
+                self._log("warn", f"  ⌨️   {skipped} character(s) skipped (not mapped)")
+            return
+
+        # ---- Legacy ADB input text mode ----
         if self.mock_mode:
             self._log("info", f"  [mock] type text ({len(resolved)} chars, {speed_ms}ms/char)")
-            await asyncio.sleep(len(resolved) * speed_ms / 1000 * 0.05)
+            for ch in resolved:
+                if ch == "\n":
+                    self._log("info", "  [mock]   keyevent ENTER")
+                else:
+                    self._log("info", f"  [mock]   input text '{ch}'")
+            await asyncio.sleep(len(resolved) * delay_per_char * 0.05)
         else:
             self._log("info", f"  ⌨️  type text: {len(resolved)} chars @ {speed_ms}ms/char")
-            # ADB input text handles most ASCII characters
-            # For complex/special chars, fall back to per-character keyevent
-            safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?@#$%&*()-_=+[]{}|;:'\"/<>`~")
-            if all(ch in safe_chars for ch in resolved):
-                # Fast path: send whole text
-                await _run_adb_input(self._serial, "text", resolved)
-                await asyncio.sleep(speed_ms / 1000 * len(resolved))
-            else:
-                for ch in resolved:
-                    if ch == " ":
-                        await _run_adb_input(self._serial, "keyevent", "KEYCODE_SPACE")
-                    elif ch == "\n":
-                        await _run_adb_input(self._serial, "keyevent", "KEYCODE_ENTER")
-                    elif ch.isascii() and ch.isprintable():
-                        await _run_adb_input(self._serial, "text", ch)
-                    else:
-                        # Unicode: broadcast via am broadcast
-                        self._log("warn", f"  skipping non-ASCII char: {ch}")
-                    await asyncio.sleep(speed_ms / 1000)
+            # Send characters one by one with delay between each,
+            # so that text_speed_ms actually controls the typing speed.
+            for ch in resolved:
+                if self._stop_requested:
+                    return
+                if ch == "\n":
+                    await _run_adb_input(self._serial, "keyevent", "KEYCODE_ENTER")
+                elif ch == " ":
+                    await _run_adb_input(self._serial, "keyevent", "KEYCODE_SPACE")
+                elif ch in ('"', "'", "\\", "`", "$", "&", "|", ";", "(", ")", "{", "}", "<", ">", "~", "#", "!", "*"):
+                    # Shell-special characters: escape with backslash for Android shell
+                    await _run_adb_input(self._serial, "text", f"\\{ch}")
+                elif ch.isascii() and ch.isprintable():
+                    await _run_adb_input(self._serial, "text", ch)
+                else:
+                    self._log("warn", f"  ⌨️  skipping non-ASCII char: {repr(ch)}")
+                if delay_per_char > 0:
+                    await asyncio.sleep(delay_per_char)
+
+    async def _load_keyboard_mapping(self, mapping_id: int) -> dict:
+        """Load keyboard mapping keys from DB (with thread-safe cache). Returns {char: {x, y}} dict."""
+        global _keyboard_mapping_cache, _keyboard_mapping_cache_lock
+
+        with _keyboard_mapping_cache_lock:
+            if mapping_id in _keyboard_mapping_cache:
+                return _keyboard_mapping_cache[mapping_id]
+
+        # Load from DB
+        try:
+            import aiosqlite
+            from config import DATABASE_PATH
+            async with aiosqlite.connect(DATABASE_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT keys_json FROM keyboard_mappings WHERE id=?", (mapping_id,)
+                )
+                row = await cursor.fetchone()
+                if row and row["keys_json"]:
+                    keys = json.loads(row["keys_json"])
+                    with _keyboard_mapping_cache_lock:
+                        _keyboard_mapping_cache[mapping_id] = keys
+                    return keys
+        except Exception as e:
+            self._log("error", f"  Failed to load keyboard mapping #{mapping_id}: {e}")
+
+        with _keyboard_mapping_cache_lock:
+            _keyboard_mapping_cache[mapping_id] = {}
+        return {}
 
     # ---- New action types: jump, stop/kill, if, orientation, launch_app, kill_app ----
 
@@ -1664,6 +1795,7 @@ class ScriptExecutor:
                 await self._type_text(
                     action.get("text_content", ""),
                     action.get("text_speed_ms", 50),
+                    action.get("keyboard_mapping_id"),
                 )
 
             elif action_type == "jump":

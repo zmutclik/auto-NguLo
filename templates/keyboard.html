@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block title %}Keyboard Mapping{% endblock %}
+{% block head_extra %}
+<style>
+    .key-btn {
+        transition: all 0.15s ease;
+        user-select: none;
+    }
+    .key-btn.mapped {
+        border-color: #6366F1;
+        background: rgba(99,102,241,0.15);
+    }
+    .key-btn.selected {
+        border-color: #F59E0B;
+        background: rgba(245,158,11,0.2);
+        box-shadow: 0 0 12px rgba(245,158,11,0.4);
+    }
+    .key-btn:hover {
+        border-color: #818CF8;
+        background: rgba(129,140,248,0.1);
+    }
+    @keyframes pulse-tap {
+        0% { box-shadow: 0 0 0 0 rgba(245,158,11,0.6); }
+        70% { box-shadow: 0 0 0 12px rgba(245,158,11,0); }
+        100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+    }
+    .tap-flash {
+        animation: pulse-tap 0.5s ease-out;
+    }
+</style>
+{% endblock %}
+{% block content %}
+
+<div class="flex items-center gap-3 mb-6">
+    <h1 class="text-xl font-bold">⌨️ Keyboard Mapping Editor</h1>
+</div>
+
+<div id="keyboard-root" x-data="keyboardEditor()" x-init="init()">
+
+    <!-- Tab: QWERTY / Number -->
+    <div class="flex items-center gap-2 mb-6">
+        <button @click="switchTab('qwerty')" :class="activeTab==='qwerty' ? 'bg-brand text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">🔤 QWERTY Keyboard</button>
+        <button @click="switchTab('number')" :class="activeTab==='number' ? 'bg-brand text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">🔢 Number Keyboard</button>
+    </div>
+
+    <!-- Info bar -->
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+        <span class="text-sm text-slate-400">📱 Device: <span x-text="deviceResolution.w+'×'+deviceResolution.h" class="text-slate-200 font-mono"></span></span>
+        <span class="text-sm text-slate-400">🗺️ Mapped: <span x-text="mappedCount()" class="text-brand font-bold"></span>/<span x-text="totalKeyList.length"></span> keys</span>
+        <span x-show="selectedChar" class="text-sm text-warning">🎯 Selected: "<span x-text="selectedChar" class="font-bold font-mono"></span>" <span class="text-slate-500">— tap/klik pada screenshot</span></span>
+    </div>
+
+    <div class="grid lg:grid-cols-3 gap-6">
+
+        <!-- LEFT: Screenshot Image -->
+        <div class="lg:col-span-2">
+            <div class="bg-surface-card border border-surface-border rounded-2xl p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="font-semibold text-sm flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-lg bg-brand/10 flex items-center justify-center">📸</span> Keyboard Screenshot
+                    </h2>
+                    <div class="flex items-center gap-2">
+                        <input type="file" accept="image/*" class="hidden" id="kb-screenshot-upload" @change="uploadScreenshot($event)">
+                        <button @click="document.getElementById('kb-screenshot-upload').click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded-lg px-3 py-2 transition-colors flex items-center gap-1">
+                            <span x-text="screenshotPath ? '🔄 Change' : '📤 Upload'"></span>
+                        </button>
+                        <button x-show="screenshotPath" @click="clearScreenshot()" class="text-xs text-slate-500 hover:text-danger transition-colors">🗑️</button>
+                    </div>
+                </div>
+
+                <!-- Screenshot preview -->
+                <div x-show="screenshotPath" class="bg-slate-900 border border-dashed border-slate-600 rounded-xl overflow-hidden relative cursor-crosshair"
+                     @mousedown.prevent="startCoordPick($event)"
+                     @touchstart.prevent="startCoordPick($event)"
+                     @contextmenu.prevent>
+                    <img :src="'/static/' + screenshotPath" class="w-full h-auto block select-none pointer-events-none" alt="Keyboard screenshot" draggable="false">
+
+                    <!-- Tap indicator -->
+                    <div x-show="pickX != null" class="absolute pointer-events-none" :style="'left:'+pickPctX+'%;top:'+pickPctY+'%'">
+                        <div class="w-8 h-8 -ml-4 -mt-4 rounded-full border-2 border-warning bg-warning/20 shadow-lg shadow-warning/40 tap-flash"></div>
+                        <div class="absolute top-0 left-0 w-full h-0.5 bg-warning -translate-y-1/2"></div>
+                        <div class="absolute top-0 left-0 h-full w-0.5 bg-warning -translate-x-1/2"></div>
+                    </div>
+
+                    <!-- Coordinate label -->
+                    <div x-show="pickX != null" class="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded-lg font-mono pointer-events-none shadow-lg backdrop-blur-sm">
+                        📍 X:<span x-text="pickX" class="text-warning font-bold"></span> Y:<span x-text="pickY" class="text-warning font-bold"></span>
+                    </div>
+
+                    <!-- Overlay dots for already-mapped keys -->
+                    <template x-for="(coord, char) in currentKeys" :key="char">
+                        <div class="absolute pointer-events-none"
+                             :style="'left:'+posToPctX(coord.x)+'%;top:'+posToPctY(coord.y)+'%'">
+                            <div class="w-4 h-4 -ml-2 -mt-2 rounded-full border border-brand bg-brand/30 shadow-sm flex items-center justify-center">
+                                <span class="text-[7px] text-white font-bold leading-none" x-text="char === 'ENTER' ? '↵' : char === 'BACKSPACE' ? '⌫' : char === ' ' ? '␣' : char.length > 2 ? '•' : char.toUpperCase()"></span>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Hint -->
+                    <div x-show="pickX == null && !selectedChar" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <span class="text-slate-500 text-sm bg-black/40 px-3 py-1 rounded-lg backdrop-blur-sm">👆 Pilih key di bawah → lalu tap/klik pada gambar</span>
+                    </div>
+                    <div x-show="pickX == null && selectedChar" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <span class="text-warning text-sm bg-black/40 px-3 py-1 rounded-lg backdrop-blur-sm font-bold">👆 Tap posisi key "<span x-text="selectedChar" class="font-mono"></span>" di gambar!</span>
+                    </div>
+                </div>
+
+                <!-- No screenshot -->
+                <div x-show="!screenshotPath" class="bg-slate-800 border border-dashed border-slate-600 rounded-xl h-64 flex flex-col items-center justify-center text-slate-500 gap-2">
+                    <span class="text-4xl">📸</span>
+                    <span>Upload screenshot keyboard kamu</span>
+                    <button @click="document.getElementById('kb-screenshot-upload').click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2 mt-1 transition-colors">📤 Upload Screenshot</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT: Key List & Controls -->
+        <div class="lg:col-span-1 space-y-4">
+            <!-- Action buttons -->
+            <div class="bg-surface-card border border-surface-border rounded-2xl p-4 flex flex-col gap-2">
+                <button @click="saveMapping()" :disabled="saving" class="w-full bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-4 py-3 transition-all shadow-lg shadow-brand/25 text-sm disabled:opacity-50">
+                    <span x-show="!saving">💾 Save Mapping</span>
+                    <span x-show="saving">⏳ Saving...</span>
+                </button>
+                <button @click="resetMapping()" class="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2.5 transition-colors">🔄 Reset All Keys</button>
+
+                <div class="border-t border-surface-border pt-3 mt-1">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-slate-400">🧪 Test Tap</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input x-model="testChar" type="text" maxlength="1" class="flex-1 bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-warning" placeholder="key...">
+                        <button @click="testTap()" :disabled="!testChar" class="bg-warning hover:bg-yellow-500 text-slate-900 font-semibold rounded-lg px-3 py-2 text-sm transition-colors disabled:opacity-40">📲 Tap</button>
+                    </div>
+                    <p x-show="testResult" class="text-xs mt-1.5" :class="testResult.startsWith('✅')?'text-success':'text-danger'" x-text="testResult"></p>
+                </div>
+            </div>
+
+            <!-- Key list -->
+            <div class="bg-surface-card border border-surface-border rounded-2xl p-4">
+                <h3 class="text-xs font-medium text-slate-400 mb-3">🔑 Key List — tap untuk pilih, lalu klik posisi di screenshot</h3>
+                <p class="text-xs text-slate-500 mb-3">🟣 Mapped · 🟡 Selected · ⬜ Not mapped</p>
+                <div class="flex flex-wrap gap-1.5 max-h-[50vh] overflow-y-auto">
+                    <template x-for="char in totalKeyList" :key="char">
+                        <button @click="selectKey(char)"
+                            :class="{
+                                'border-brand bg-brand/15 text-brand': currentKeys[char] && selectedChar !== char,
+                                'border-warning bg-warning/15 text-warning shadow-[0_0_8px_rgba(245,158,11,0.4)]': selectedChar === char,
+                                'border-slate-600 bg-slate-800/50 text-slate-500': !currentKeys[char] && selectedChar !== char,
+                            }"
+                            class="key-btn border rounded-lg px-2.5 py-1.5 text-xs font-mono transition-all"
+                            x-text="char === 'ENTER' ? '↵ Enter' : char === 'BACKSPACE' ? '⌫ Bksp' : char === ' ' ? '␣ Space' : char"
+                            :title="'Click to select, then tap on screenshot'">
+                        </button>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save confirmation -->
+    <div x-show="savedMsg" x-transition class="fixed top-4 right-4 z-50 bg-success text-white rounded-xl px-5 py-3 shadow-2xl text-sm font-medium flex items-center gap-2">
+        <span>✅</span> <span x-text="savedMsg"></span>
+    </div>
+</div>
+
+<script>
+    function keyboardEditor() {
+        return {
+            activeTab: 'qwerty',
+            qwertyMapping: null,   // {id, name, layout_type, keys_json: {...}, key_list: [...]}
+            numberMapping: null,
+            currentMappingId: null,
+            currentKeys: {},        // {char: {x, y}, ...}
+            totalKeyList: [],       // ["q","w","e",...]
+            screenshotPath: '',
+            selectedChar: null,     // currently selected key char
+            pickX: null,
+            pickY: null,
+            pickPctX: 0,
+            pickPctY: 0,
+            testChar: '',
+            testResult: '',
+            saving: false,
+            savedMsg: '',
+            deviceResolution: { w: 1080, h: 1920 },
+            // Screenshot img dims (set on load)
+            imgW: 1080,
+            imgH: 1920,
+
+            async init() {
+                // Fetch device resolution
+                try {
+                    const r = await fetch('/api/device/info');
+                    if (r.ok) {
+                        const d = await r.json();
+                        this.deviceResolution = { w: d.width || 1080, h: d.height || 1920 };
+                    }
+                } catch(e) {}
+
+                // Fetch keyboard mappings
+                await this.loadMappings();
+            },
+
+            async loadMappings() {
+                try {
+                    const r = await fetch('/api/keyboard');
+                    const data = await r.json();
+                    for (const m of data) {
+                        if (m.layout_type === 'qwerty') {
+                            this.qwertyMapping = m;
+                        } else if (m.layout_type === 'number') {
+                            this.numberMapping = m;
+                        }
+                    }
+                    this.switchTab('qwerty');  // default
+                } catch(e) {
+                    console.error('Failed to load keyboard mappings:', e);
+                }
+            },
+
+            switchTab(type) {
+                this.activeTab = type;
+                const mapping = type === 'qwerty' ? this.qwertyMapping : this.numberMapping;
+                if (mapping) {
+                    this.currentMappingId = mapping.id;
+                    this.currentKeys = mapping.keys_json || {};
+                    this.totalKeyList = mapping.key_list || [];
+                    this.screenshotPath = mapping._screenshot_path || '';
+                }
+                this.selectedChar = null;
+                this.pickX = null;
+                this.pickY = null;
+                this.testResult = '';
+            },
+
+            getCurrentMapping() {
+                return this.activeTab === 'qwerty' ? this.qwertyMapping : this.numberMapping;
+            },
+
+            mappedCount() {
+                return Object.keys(this.currentKeys).length;
+            },
+
+            selectKey(char) {
+                if (this.selectedChar === char) {
+                    this.selectedChar = null;  // deselect
+                    this.testResult = '';
+                    return;
+                }
+                this.selectedChar = char;
+                this.pickX = null;
+                this.pickY = null;
+                this.testResult = '';
+
+                // If already mapped, show existing coords
+                if (this.currentKeys[char]) {
+                    const c = this.currentKeys[char];
+                    this.pickX = Math.round(c.x);
+                    this.pickY = Math.round(c.y);
+                    this.pickPctX = this.posToPctX(c.x);
+                    this.pickPctY = this.posToPctY(c.y);
+                }
+            },
+
+            posToPctX(x) {
+                if (!this.imgW || this.imgW <= 0) return 50;
+                return Math.max(0, Math.min(100, (x / this.deviceResolution.w) * 100));
+            },
+
+            posToPctY(y) {
+                if (!this.imgH || this.imgH <= 0) return 50;
+                return Math.max(0, Math.min(100, (y / this.deviceResolution.h) * 100));
+            },
+
+            pctToPosX(pct) {
+                return Math.round((pct / 100) * this.deviceResolution.w);
+            },
+
+            pctToPosY(pct) {
+                return Math.round((pct / 100) * this.deviceResolution.h);
+            },
+
+            startCoordPick(evt) {
+                if (!this.selectedChar) return;
+                const img = evt.currentTarget.querySelector('img');
+                if (!img) return;
+                this.imgW = img.naturalWidth || img.clientWidth;
+                this.imgH = img.naturalHeight || img.clientHeight;
+
+                const rect = img.getBoundingClientRect();
+                const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+                const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+
+                let pctX = (clientX - rect.left) / rect.width * 100;
+                let pctY = (clientY - rect.top) / rect.height * 100;
+                pctX = Math.max(0, Math.min(100, pctX));
+                pctY = Math.max(0, Math.min(100, pctY));
+
+                const posX = this.pctToPosX(pctX);
+                const posY = this.pctToPosY(pctY);
+
+                this.pickX = posX;
+                this.pickY = posY;
+                this.pickPctX = pctX;
+                this.pickPctY = pctY;
+
+                // Save immediately
+                this.currentKeys[this.selectedChar] = { x: posX, y: posY };
+
+                // Save per-key to backend
+                this.saveSingleKey(this.selectedChar, posX, posY);
+            },
+
+            async saveSingleKey(char, x, y) {
+                try {
+                    await fetch(`/api/keyboard/${this.currentMappingId}/keys?char=${encodeURIComponent(char)}&x=${x}&y=${y}`, {
+                        method: 'PUT',
+                    });
+                } catch(e) {
+                    console.error('Failed to save key:', e);
+                }
+            },
+
+            async testTap() {
+                if (!this.testChar) return;
+                const char = this.testChar;
+                if (!this.currentKeys[char]) {
+                    this.testResult = '❌ Key tidak ditemukan di mapping';
+                    return;
+                }
+                this.testResult = '⏳ Tapping...';
+                try {
+                    const r = await fetch(`/api/keyboard/${this.currentMappingId}/test-tap?char=${encodeURIComponent(char)}`, {
+                        method: 'POST',
+                    });
+                    const data = await r.json();
+                    if (data.success) {
+                        this.testResult = `✅ Tapped "${char}" at (${data.x}, ${data.y})`;
+                    } else {
+                        this.testResult = `❌ Failed: ${data.error || 'unknown'}`;
+                    }
+                } catch(e) {
+                    this.testResult = '❌ Network error';
+                }
+            },
+
+            async saveMapping() {
+                this.saving = true;
+                try {
+                    const r = await fetch(`/api/keyboard/${this.currentMappingId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ keys_json: this.currentKeys }),
+                    });
+                    if (r.ok) {
+                        const updated = await r.json();
+                        this.savedMsg = `Saved! ${this.mappedCount()} keys mapped`;
+                        if (this.activeTab === 'qwerty') {
+                            this.qwertyMapping = { ...this.qwertyMapping, keys_json: updated.keys_json };
+                        } else {
+                            this.numberMapping = { ...this.numberMapping, keys_json: updated.keys_json };
+                        }
+                        setTimeout(() => { this.savedMsg = ''; }, 3000);
+                    }
+                } catch(e) {
+                    alert('Failed to save: ' + e);
+                }
+                this.saving = false;
+            },
+
+            resetMapping() {
+                if (!confirm(`Hapus SEMUA mapping key untuk ${this.activeTab === 'qwerty' ? 'QWERTY' : 'Number'} keyboard?`)) return;
+                this.currentKeys = {};
+                this.selectedChar = null;
+                this.pickX = null;
+                this.pickY = null;
+                this.saveMapping();
+            },
+
+            async uploadScreenshot(evt) {
+                const file = evt.target.files[0];
+                if (!file) return;
+                const form = new FormData();
+                form.append('file', file);
+                try {
+                    const r = await fetch('/api/upload/template', { method: 'POST', body: form });
+                    const data = await r.json();
+                    this.screenshotPath = data.path;
+                    // Store screenshot path in mapping (we'll store it locally only, not in DB)
+                    const mapping = this.getCurrentMapping();
+                    if (mapping) mapping._screenshot_path = data.path;
+                } catch(e) {
+                    alert('Upload failed: ' + e);
+                }
+            },
+
+            clearScreenshot() {
+                this.screenshotPath = '';
+                const mapping = this.getCurrentMapping();
+                if (mapping) mapping._screenshot_path = '';
+            },
+        };
+    }
+</script>
+{% endblock %}

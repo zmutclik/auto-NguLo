@@ -98,6 +98,8 @@ class ActionCreate(BaseModel):
     wait_ms: int = 1000
     wait_before_ms: int = 500
     wait_after_ms: int = 500
+    # keyboard mapping for type_text via tap
+    keyboard_mapping_id: Optional[int] = None
 
 
 class ActionUpdate(BaseModel):
@@ -157,6 +159,19 @@ class ActionUpdate(BaseModel):
     wait_ms: Optional[int] = None
     wait_before_ms: Optional[int] = None
     wait_after_ms: Optional[int] = None
+    # keyboard mapping for type_text via tap
+    keyboard_mapping_id: Optional[int] = None
 
 class ActionReorderRequest(BaseModel):
     order: list[int] = Field(..., description="List of action IDs in desired order")
+
+# ---- Keyboard Mapping ----
+class KeyboardMappingCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    layout_type: str = Field(default="qwerty", pattern=r"^(qwerty|number)$")
+    keys_json: dict[str, dict] = Field(default={})  # {"a": {"x": 100, "y": 200}, ...}
+
+class KeyboardMappingUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=80)
+    layout_type: Optional[str] = Field(None, pattern=r"^(qwerty|number)$")
+    keys_json: Optional[dict[str, dict]] = None

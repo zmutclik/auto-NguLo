@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-NguLo — Keyboard Mapping</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: { DEFAULT: '#0F172A', card: '#1E293B', border: '#334155', hover: '#263348' },
+                        brand: { DEFAULT: '#6366F1', hover: '#5558E6' },
+                        success: '#10B981', danger: '#EF4444', warning: '#F59E0B',
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        * { font-family: 'Inter', system-ui, sans-serif; }
+        body { background: #0F172A; color: #F1F5F9; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1E293B; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <!-- Navigation -->
+    <nav class="bg-slate-900/80 backdrop-blur-md border-b border-surface-border sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-4 flex items-center justify-between h-16">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-gradient-to-br from-brand to-purple-600 rounded-xl flex items-center justify-center shadow-sm shadow-brand/20">
+                    <span class="text-lg">🤖</span>
+                </div>
+                <span class="font-bold text-lg bg-gradient-to-r from-brand to-purple-400 bg-clip-text text-transparent">Auto-NguLo</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <a href="dashboard.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">📋 Scripts</a>
+                <a href="history.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">📜 History</a>
+                <a href="keyboard.html" class="px-4 py-2 text-brand bg-brand/10 rounded-lg text-sm font-medium transition-colors">⌨️ Keyboard</a>
+                <a href="settings.html" class="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-sm font-medium transition-colors">⚙️ Settings</a>
+                <a href="login.html" class="px-4 py-2 text-slate-400 hover:text-danger hover:bg-red-500/10 rounded-lg text-sm font-medium transition-colors">🔒 Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-4 py-8">
+        <h1 class="text-xl font-bold mb-6">⌨️ Keyboard Mapping Editor</h1>
+
+        <!-- Tab bar -->
+        <div class="flex items-center gap-2 mb-6">
+            <button class="bg-brand text-white px-4 py-2 rounded-lg text-sm font-medium">🔤 QWERTY Keyboard</button>
+            <button class="bg-slate-800 text-slate-400 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">🔢 Number Keyboard</button>
+        </div>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+            <!-- Screenshot -->
+            <div class="lg:col-span-2 bg-surface-card border border-surface-border rounded-2xl p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="font-semibold text-sm">📸 Keyboard Screenshot</h2>
+                    <button class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded-lg px-3 py-2 transition-colors">📤 Upload</button>
+                </div>
+                <div class="bg-slate-800 border border-dashed border-slate-600 rounded-xl h-64 flex items-center justify-center text-slate-500">
+                    📸 Upload screenshot keyboard kamu
+                </div>
+            </div>
+
+            <!-- Key panel -->
+            <div class="space-y-4">
+                <div class="bg-surface-card border border-surface-border rounded-2xl p-4 flex flex-col gap-2">
+                    <button class="w-full bg-brand hover:bg-brand-hover text-white font-semibold rounded-lg px-4 py-3 transition-all text-sm">💾 Save Mapping</button>
+                    <button class="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2.5 transition-colors">🔄 Reset All Keys</button>
+                </div>
+
+                <div class="bg-surface-card border border-surface-border rounded-2xl p-4">
+                    <h3 class="text-xs font-medium text-slate-400 mb-3">🔑 Key List — pilih → tap di screenshot</h3>
+                    <p class="text-xs text-slate-500 mb-3">🟣 Mapped · 🟡 Selected · ⬜ Not mapped</p>
+                    <div class="flex flex-wrap gap-1.5 max-h-64 overflow-y-auto">
+                        <button class="key-btn border border-slate-600 bg-slate-800/50 text-slate-500 rounded-lg px-2.5 py-1.5 text-xs font-mono">q</button>
+                        <button class="key-btn border border-slate-600 bg-slate-800/50 text-slate-500 rounded-lg px-2.5 py-1.5 text-xs font-mono">w</button>
+                        <button class="key-btn border border-brand bg-brand/15 text-brand rounded-lg px-2.5 py-1.5 text-xs font-mono">e</button>
+                        <button class="key-btn border border-slate-600 bg-slate-800/50 text-slate-500 rounded-lg px-2.5 py-1.5 text-xs font-mono">r</button>
+                        <button class="key-btn border border-warning bg-warning/15 text-warning rounded-lg px-2.5 py-1.5 text-xs font-mono shadow">t</button>
+                        <!-- More keys... -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

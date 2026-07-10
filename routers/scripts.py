@@ -86,8 +86,8 @@ async def import_scripts(request: Request):
                    template_path, match_threshold, retry_count, retry_delay_ms, jump_on_success, jump_on_fail,
                    key_code, combo_action, api_url, api_method, api_headers, api_body, api_save_to_var,
                    var_name, var_operation, var_value, text_content, text_speed_ms,
-                   use_match_result, wait_ms, wait_before_ms, wait_after_ms)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   use_match_result, wait_ms, wait_before_ms, wait_after_ms, keyboard_mapping_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     new_id, i,
                     action_data.get("name", f"action_{i}"),
@@ -117,6 +117,7 @@ async def import_scripts(request: Request):
                     action_data.get("wait_ms", 1000),
                     action_data.get("wait_before_ms", 500),
                     action_data.get("wait_after_ms", 500),
+                    action_data.get("keyboard_mapping_id"),
                 )
             )
         imported += 1

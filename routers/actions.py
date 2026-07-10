@@ -59,8 +59,8 @@ async def create_action(script_id: int, data: ActionCreate):
             condition_var, condition_op, condition_value, jump_on_true, jump_on_false,
             orientation_value,
             app_package,
-            call_script_name, goto_script_name, toast_message, toast_duration, enabled, use_match_result, wait_ms, wait_before_ms, wait_after_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            call_script_name, goto_script_name, toast_message, toast_duration, enabled, use_match_result, wait_ms, wait_before_ms, wait_after_ms, keyboard_mapping_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             script_id, order, data.name, data.action_type,
             data.x, data.y, data.x2, data.y2, data.duration_ms,
@@ -78,6 +78,7 @@ async def create_action(script_id: int, data: ActionCreate):
             data.call_script_name, data.goto_script_name,
             data.toast_message, data.toast_duration,
             int(data.enabled), int(data.use_match_result), data.wait_ms, data.wait_before_ms, data.wait_after_ms,
+            data.keyboard_mapping_id,
         )
     )
     await db.commit()
@@ -134,6 +135,7 @@ async def update_action(script_id: int, action_id: int, data: ActionUpdate):
         "use_match_result": int(data.use_match_result) if data.use_match_result is not None else None,
         "wait_ms": data.wait_ms, "wait_before_ms": data.wait_before_ms,
         "wait_after_ms": data.wait_after_ms,
+        "keyboard_mapping_id": data.keyboard_mapping_id,
     }
 
     set_parts = []
@@ -239,8 +241,8 @@ async def copy_move_actions(script_id: int, data: _CopyMoveRequest):
                 orientation_value, app_package,
                 call_script_name, goto_script_name,
                 toast_message, toast_duration,
-                use_match_result, wait_ms, wait_before_ms, wait_after_ms
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                use_match_result, wait_ms, wait_before_ms, wait_after_ms, keyboard_mapping_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.target_script_id, next_order + i,
                 row.get("name", f"action_{i}"), row.get("action_type", "wait"),
@@ -270,6 +272,7 @@ async def copy_move_actions(script_id: int, data: _CopyMoveRequest):
                 row.get("use_match_result", 0),
                 row.get("wait_ms", 1000), row.get("wait_before_ms", 500),
                 row.get("wait_after_ms", 500),
+                row.get("keyboard_mapping_id"),
             )
         )
         inserted_ids.append(cursor.lastrowid)

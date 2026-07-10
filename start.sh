@@ -16,8 +16,8 @@ pkill -9 -f "uvicorn main:app" 2>/dev/null
 sleep 1
 
 # ---- Ensure venv exists ----
-if [ ! -f "./venv/bin/uvicorn" ]; then
-    echo "❌ Virtualenv not found! Run: python -m venv venv && ./venv/bin/pip install -r requirements.txt"
+if [ ! -f "venv/bin/uvicorn" ]; then
+    echo "❌ Virtualenv not found! Run: python -m venv venv && venv/bin/pip install -r requirements.txt"
     exit 1
 fi
 
@@ -25,7 +25,7 @@ echo ""
 
 # ---- Start FastAPI with nohup (survives terminal close) ----
 cd "$(dirname "$0")"
-nohup ./venv/bin/uvicorn main:app \
+nohup venv/bin/uvicorn main:app \
     --host 0.0.0.0 \
     --port 8000 \
     --log-level info \

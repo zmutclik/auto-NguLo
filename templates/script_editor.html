@@ -407,6 +407,16 @@
                         <div x-show="a.action_type === 'type_text'" class="space-y-2 mb-3">
                             <div><label class="text-xs text-slate-500">Text</label><textarea x-model="a.text_content" rows="2" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100 font-mono resize-none"></textarea></div>
                             <div><label class="text-xs text-slate-500">Speed (ms/char)</label><input x-model.number="a.text_speed_ms" type="number" min="10" max="1000" step="10" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"></div>
+                            <div>
+                                <label class="text-xs text-slate-500">⌨️ Keyboard Mapping <span class="text-slate-600">(tap mode)</span></label>
+                                <select x-model="a.keyboard_mapping_id" class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100">
+                                    <option value="">None — ADB input text (fast key inject)</option>
+                                    <template x-for="km in keyboardMappings" :key="km.id">
+                                        <option :value="km.id" x-text="km.name + ' (' + km.layout_type + ', ' + (Object.keys(km.keys_json||{}).length || 0) + ' keys)'"></option>
+                                    </template>
+                                </select>
+                                <p x-show="a.keyboard_mapping_id" class="text-xs text-slate-600 mt-1">Type text dengan men-tap setiap karakter di keyboard sesuai mapping</p>
+                            </div>
                         </div>
 
                         <!-- Jump -->
@@ -780,6 +790,8 @@
             copyMoveMode: 'copy',
             copyMoveLoading: false,
             allScripts: [],
+            // Keyboard mappings (for type_text keyboard tap mode)
+            keyboardMappings: [],
             // Device resolution (fetched from /api/device/info); defaults to 1080x1920
             deviceResolution: { w: 1080, h: 1920 },
             actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app','read_sms','call_script','goto_script','toast'],
@@ -945,9 +957,21 @@
                     console.warn('[scriptEditor] Could not fetch device resolution, using default 1080x1920:', e.message || e);
                 }
             },
+            async fetchKeyboardMappings() {
+                try {
+                    const r = await fetch('/api/keyboard');
+                    if (r.ok) {
+                        this.keyboardMappings = await r.json();
+                    }
+                } catch(e) {
+                    console.warn('[scriptEditor] Could not fetch keyboard mappings:', e);
+                }
+            },
             async init() {
                 // Fetch device resolution first (non-blocking, but before any coordinate picks)
                 await this.fetchDeviceResolution();
+                // Fetch keyboard mappings for type_text keyboard tap mode
+                this.fetchKeyboardMappings();
                 // Check for script_id from template variable first, then fallback to ?id= query param
                 const templateId = document.getElementById('script-editor-root')?.dataset?.scriptId;
                 if (templateId) {
@@ -1003,6 +1027,7 @@
                     sms_type:'inbox', sms_limit:1,
                     call_script_name:'', goto_script_name:'',
                     toast_message:'', toast_duration:'short',
+                    keyboard_mapping_id: null,
                     // coordinate picker state
                     _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
                     _pickPctX: null, _pickPctY: null, _swiping: false,
@@ -1060,6 +1085,7 @@
                         enabled: !!a.enabled,
                         wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,
                         wait_after_ms: a.wait_after_ms,
+                        keyboard_mapping_id: a.keyboard_mapping_id || null,
                     };
                     if (a.id) {
                         await fetch(`/api/scripts/${scriptId}/actions/${a.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });

@@ -83,6 +83,8 @@ async def init_db():
             -- type text
             text_content    TEXT DEFAULT '',
             text_speed_ms   INTEGER DEFAULT 50,
+            -- keyboard mapping for type_text via tap
+            keyboard_mapping_id INTEGER DEFAULT NULL,
             -- jump
             jump_to         TEXT DEFAULT '',
             -- stop / kill — no extra fields needed
@@ -112,6 +114,15 @@ async def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_actions_script_id ON actions(script_id);
         CREATE INDEX IF NOT EXISTS idx_actions_order ON actions(script_id, order_num);
+
+        CREATE TABLE IF NOT EXISTS keyboard_mappings (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL,
+            layout_type     TEXT NOT NULL DEFAULT 'qwerty' CHECK(layout_type IN ('qwerty', 'number')),
+            keys_json       TEXT NOT NULL DEFAULT '{}',
+            created_at      TEXT DEFAULT (datetime('now')),
+            updated_at      TEXT DEFAULT (datetime('now'))
+        );
 
         CREATE TABLE IF NOT EXISTS execution_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,6 +233,32 @@ async def _migrate_backfill_script_names(db):
             await db.commit()
         except Exception:
             pass  # column already exists
+
+    # Migration: add keyboard_mapping_id column (v1.6+)
+    try:
+        await db.execute("ALTER TABLE actions ADD COLUMN keyboard_mapping_id INTEGER DEFAULT NULL")
+        await db.commit()
+    except Exception:
+        pass  # column already exists
+
+    # ---- Create keyboard_mappings table (v1.6+) ----
+    await db.executescript("""
+        CREATE TABLE IF NOT EXISTS keyboard_mappings (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL,
+            layout_type     TEXT NOT NULL DEFAULT 'qwerty' CHECK(layout_type IN ('qwerty', 'number')),
+            keys_json       TEXT NOT NULL DEFAULT '{}',
+            created_at      TEXT DEFAULT (datetime('now')),
+            updated_at      TEXT DEFAULT (datetime('now'))
+        );
+
+        -- Seed default empty mappings if none exist
+        INSERT OR IGNORE INTO keyboard_mappings (id, name, layout_type, keys_json)
+            VALUES (1, 'Default QWERTY', 'qwerty', '{}');
+        INSERT OR IGNORE INTO keyboard_mappings (id, name, layout_type, keys_json)
+            VALUES (2, 'Default Number', 'number', '{}');
+    """)
+    await db.commit()
 
 async def close_db():
     """Close the database connection."""
