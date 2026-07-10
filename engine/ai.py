@@ -125,12 +125,114 @@ def _extract_json_object(text: str) -> dict | None:
     return None
 
 
+def _get_image_dimensions(image_path: str) -> tuple[int, int]:
+    """
+    Get the width and height of an image file using only the standard library.
+    Supports JPEG, PNG, GIF, BMP, WebP.
+    Returns (width, height) or (0, 0) on failure.
+    """
+    import struct
+
+    try:
+        with open(image_path, "rb") as f:
+            header = f.read(32)
+
+        if len(header) < 4:
+            return (0, 0)
+
+        # JPEG: look for SOF0/1/2 marker (0xFFC0, 0xFFC1, 0xFFC2)
+        if header[:2] == b"\xff\xd8":
+            with open(image_path, "rb") as f:
+                f.read(2)  # SOI
+                while True:
+                    b = f.read(2)
+                    if len(b) < 2:
+                        break
+                    marker = b
+                    if marker[0:1] != b"\xff":
+                        break
+                    # SOS marker — scan data follows, stop searching
+                    if marker == b"\xff\xda":
+                        break
+                    # RST markers (0xFFD0-0xFFD7) have no length field
+                    if b"\xff\xd0" <= marker <= b"\xff\xd7":
+                        continue
+                    # Other markers have a 2-byte length (includes the 2 length bytes)
+                    length_bytes = f.read(2)
+                    if len(length_bytes) < 2:
+                        break
+                    length = struct.unpack(">H", length_bytes)[0]
+                    if marker in (b"\xff\xc0", b"\xff\xc1", b"\xff\xc2"):
+                        # SOF0/SOF1/SOF2: precision (1), height (2), width (2)
+                        f.read(1)
+                        h = struct.unpack(">H", f.read(2))[0]
+                        w = struct.unpack(">H", f.read(2))[0]
+                        return (w, h)
+                    # Skip remaining segment data
+                    if length > 2:
+                        f.read(length - 2)
+            return (0, 0)
+
+        # PNG: 8-byte signature, then IHDR at offset 16 (width:4, height:4)
+        if header[:8] == b"\x89PNG\r\n\x1a\n":
+            w, h = struct.unpack(">II", header[16:24])
+            return (w, h)
+
+        # GIF: bytes 6-7 = width, 8-9 = height (little-endian)
+        if header[:3] == b"GIF" and header[3:6] in (b"87a", b"89a"):
+            w, h = struct.unpack("<HH", header[6:10])
+            return (w, h)
+
+        # BMP: offset 18 = width, 22 = height (signed LE int32)
+        if header[:2] == b"BM":
+            w = struct.unpack("<i", header[18:22])[0]
+            h = abs(struct.unpack("<i", header[22:26])[0])
+            return (w, h)
+
+        # WebP: RIFF container, look for "VP8 " or "VP8L" or "VP8X"
+        if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+            # For simple VP8/VP8L we can parse; VP8X is extended
+            with open(image_path, "rb") as f:
+                f.read(12)
+                chunk = f.read(10)
+                if chunk[:4] == b"VP8 ":
+                    # VP8 lossy: 10 bytes frame header; w/h are in the first keyframe
+                    # width at bits [23:10] & 0x3fff, height at bits [41:26] & 0x3fff
+                    f.read(10)  # skip to keyframe payload
+                    kf = f.read(10)
+                    if len(kf) >= 6:
+                        w = struct.unpack("<H", kf[:2])[0] & 0x3fff
+                        h = struct.unpack("<H", kf[4:6])[0] & 0x3fff
+                        return (w, h)
+                elif chunk[:4] == b"VP8L":
+                    bits = struct.unpack("<I", chunk[4:8])[0]
+                    w = (bits & 0x3fff) + 1
+                    h = ((bits >> 14) & 0x3fff) + 1
+                    return (w, h)
+                elif chunk[:4] == b"VP8X":
+                    # Extended format: width+1 at bits [30:28], height+1 at [58:56]
+                    # Actually let's read the VP8X header properly
+                    f.read(10)  # already read chunk header
+                    xh = f.read(10)
+                    if len(xh) >= 10:
+                        w = struct.unpack("<I", xh[4:8])[0] & 0x00ffffff
+                        h = (struct.unpack("<I", xh[6:10])[0] >> 8) & 0x00ffffff
+                        if w and h:
+                            return (w + 1, h + 1)
+            return (0, 0)
+
+        return (0, 0)
+    except Exception:
+        return (0, 0)
+
+
 async def analyze_keyboard_screenshot(image_path: str, device_width: int, device_height: int) -> dict:
     """
     Send a keyboard screenshot to the AI and get back key mapping coordinates.
 
     The AI is asked to identify all visible keys and return their bounding box
-    centers as (x, y) coordinates in the device's screen resolution.
+    centers as (x, y) coordinates. Coordinates are automatically scaled from
+    the actual image resolution to the device's screen resolution.
 
     Returns:
         dict with:
@@ -161,6 +263,18 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
                 ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp"}
     mime_type = mime_map.get(ext, "image/png")
 
+    # Determine the actual image pixel dimensions
+    img_width, img_height = _get_image_dimensions(image_path)
+    # Fallback to device resolution if detection fails
+    if img_width <= 0 or img_height <= 0:
+        img_width, img_height = device_width, device_height
+
+    # Use actual image dimensions for the AI prompt
+    # The AI returns coordinates in image-pixel space; we'll scale to device space later
+    prompt_width, prompt_height = img_width, img_height
+    scale_x = device_width / img_width if img_width > 0 else 1.0
+    scale_y = device_height / img_height if img_height > 0 else 1.0
+
     system_prompt = (
         "You are a computer vision assistant that analyzes screenshots of mobile keyboards. "
         "Your task is to locate every visible key on the keyboard and return its center coordinates. "
@@ -170,24 +284,23 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
     )
 
     user_prompt = (
-        f"This is a screenshot of a mobile keyboard displayed on a device with resolution "
-        f"{device_width}x{device_height} pixels. "
+        f"This is a screenshot of a mobile keyboard. The image is exactly {prompt_width}x{prompt_height} pixels. "
         f"Please identify EVERY visible key on the keyboard. For each key, determine the "
         f"center pixel coordinates (x, y) where the key should be tapped.\n\n"
         f"Return your answer as a JSON object ONLY, with this exact structure:\n"
         f'{{"keys": {{"q": {{"x": 123, "y": 456}}, "w": {{"x": 234, "y": 456}}, ...}}}}\n\n'
         f"IMPORTANT RULES:\n"
-        f"1. The x coordinate is horizontal (0 = left edge, {device_width} = right edge).\n"
-        f"2. The y coordinate is vertical (0 = top edge, {device_height} = bottom edge).\n"
+        f"1. The x coordinate is horizontal (0 = left edge of image, {prompt_width} = right edge).\n"
+        f"2. The y coordinate is vertical (0 = top edge of image, {prompt_height} = bottom edge).\n"
         f"3. Include ALL keys you can see: letters, numbers, space, enter, backspace, shift, "
         f"symbols, punctuation, emoji key, etc.\n"
         f"4. For special keys, use these labels: \"ENTER\", \"BACKSPACE\", \"SPACE\", \"SHIFT\", "
         f"\"CAPS\", \"TAB\", \"DOT\" (for '.'), \"COMMA\" (for ','), \"SLASH\" (for '/'), "
         f"\"AT\" (for '@'), etc.\n"
-        f"5. Coordinates must be integers, in the device's native resolution ({device_width}x{device_height}).\n"
+        f"5. Coordinates must be integers, within the image bounds (0 to {prompt_width-1} for x, 0 to {prompt_height-1} for y).\n"
         f"6. Return ONLY the JSON object, no other text, no markdown code blocks, no explanation.\n"
-        f"7. Estimate carefully — look at the keyboard layout and proportionally map each key "
-        f"to its correct pixel position."
+        f"7. Estimate carefully — look at the keyboard layout in THIS image and proportionally "
+        f"map each key to its correct pixel position within the {prompt_width}x{prompt_height} image."
     )
 
     messages = [
@@ -330,7 +443,8 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
 
     keys = parsed.get("keys", {})
 
-    # Validate & sanitize keys — ensure coordinates are numbers
+    # Validate, scale & sanitize keys
+    # AI returns coordinates in image-pixel space; scale to device space
     sanitized = {}
     for char, coord in keys.items():
         if not isinstance(coord, dict):
@@ -340,11 +454,11 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
         if x is None or y is None:
             continue
         try:
-            x = round(float(x))
-            y = round(float(y))
+            x = round(float(x) * scale_x)
+            y = round(float(y) * scale_y)
         except (ValueError, TypeError):
             continue
-        # Clamp to screen bounds
+        # Clamp to device screen bounds
         x = max(0, min(device_width, x))
         y = max(0, min(device_height, y))
         sanitized[str(char)] = {"x": x, "y": y}
@@ -353,5 +467,8 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
         "success": True,
         "keys": sanitized,
         "key_count": len(sanitized),
+        "image_resolution": f"{img_width}x{img_height}",
+        "device_resolution": f"{device_width}x{device_height}",
+        "scale": f"{scale_x:.4f}x{scale_y:.4f}",
         "raw_response": raw_content[:500],
     }
