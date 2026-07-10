@@ -110,13 +110,43 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
         "messages": messages,
         "max_tokens": 4096,
         "temperature": 0.1,
+        "stream": False,
     }
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(api_url, json=payload, headers=headers)
             resp.raise_for_status()
-            data = resp.json()
+            raw_text = resp.text
+
+            # Some providers return the JSON with extra trailing data
+            # (e.g., newlines, whitespace, or additional objects).
+            # Try to extract just the first complete JSON object.
+            data = None
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError:
+                # Try to find the first valid JSON object boundary
+                stripped = raw_text.strip()
+                # Find balanced braces
+                if stripped.startswith("{"):
+                    depth = 0
+                    end_idx = 0
+                    for i, ch in enumerate(stripped):
+                        if ch == "{":
+                            depth += 1
+                        elif ch == "}":
+                            depth -= 1
+                            if depth == 0:
+                                end_idx = i + 1
+                                break
+                    if end_idx > 0:
+                        try:
+                            data = json.loads(stripped[:end_idx])
+                        except json.JSONDecodeError:
+                            pass
+                if data is None:
+                    raise
     except httpx.TimeoutException:
         return {"success": False, "error": "AI request timed out (60s)", "keys": {}}
     except httpx.HTTPStatusError as e:
