@@ -16,6 +16,58 @@ def _is_configured() -> bool:
     return bool(AI_URL and AI_KEY and AI_MODEL)
 
 
+def _extract_json_object(text: str) -> dict | None:
+    """
+    Extract a JSON object dict from arbitrary text using multiple strategies.
+    Returns None if nothing valid found.
+    """
+    text = text.strip()
+    if not text:
+        return None
+
+    # 1) Direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2) Balanced-brace extraction: find the first complete top-level JSON object
+    # This handles cases like:
+    #   {"keys": {...}} some trailing garbage
+    #   Some prefix text {"keys": {...}}
+    import re
+    # Find first '{'
+    start = text.find("{")
+    if start >= 0:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        break  # malformed, give up
+    return None
+
+
 async def analyze_keyboard_screenshot(image_path: str, device_width: int, device_height: int) -> dict:
     """
     Send a keyboard screenshot to the AI and get back key mapping coordinates.
@@ -162,45 +214,28 @@ async def analyze_keyboard_screenshot(image_path: str, device_width: int, device
             "success": False,
             "error": f"Unexpected AI response format: {e}",
             "keys": {},
-            "raw_response": str(data),
+            "raw_response": json.dumps(data, ensure_ascii=False)[:2000],
         }
 
-    # Parse the JSON from the response — try to extract from markdown if needed
+    if not content or not content.strip():
+        return {
+            "success": False,
+            "error": f"AI returned empty response. Full response: {json.dumps(data, ensure_ascii=False)[:2000]}",
+            "keys": {},
+            "raw_response": "",
+        }
+
     raw_content = content.strip()
-    parsed = None
 
-    # Try direct JSON parse
-    try:
-        parsed = json.loads(raw_content)
-    except json.JSONDecodeError:
-        pass
-
-    # Try extracting JSON from markdown code blocks
-    if parsed is None:
-        import re
-        match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw_content, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-    # Try finding raw JSON object in text
-    if parsed is None:
-        import re
-        match = re.search(r'\{[\s\S]*"keys"[\s\S]*\}', raw_content)
-        if match:
-            try:
-                parsed = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+    # Parse the JSON from the response using multiple strategies
+    parsed = _extract_json_object(raw_content)
 
     if parsed is None:
         return {
             "success": False,
             "error": "AI response is not valid JSON",
             "keys": {},
-            "raw_response": raw_content[:500],
+            "raw_response": raw_content[:1000],
         }
 
     keys = parsed.get("keys", {})
