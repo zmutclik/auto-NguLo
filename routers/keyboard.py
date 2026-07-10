@@ -1,5 +1,6 @@
 """Keyboard mapping router — CRUD for touch keyboard layouts used by type_text action."""
 import json
+import os
 
 from fastapi import APIRouter, HTTPException
 from database.connection import get_db
@@ -230,3 +231,81 @@ async def delete_mapping(mapping_id: int):
     await db.execute("DELETE FROM keyboard_mappings WHERE id=?", (mapping_id,))
     await db.commit()
     return {"message": "Mapping deleted"}
+
+
+# ── AI-powered keyboard mapping ──────────────────────────────────────
+
+@router.post("/{mapping_id}/ai-map")
+async def ai_map_keyboard(mapping_id: int, image_path: str):
+    """Use AI to analyze a keyboard screenshot and auto-fill key coordinates.
+
+    Args:
+        mapping_id: The keyboard mapping ID to update.
+        image_path: Relative path to the uploaded screenshot (e.g., 'templates/kb.png').
+    """
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM keyboard_mappings WHERE id=?", (mapping_id,))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Keyboard mapping not found")
+
+    # Resolve the full path to the screenshot
+    from config import TEMPLATE_DIR
+    full_path = os.path.join(TEMPLATE_DIR, os.path.basename(image_path))
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=400, detail=f"Screenshot not found: {image_path}")
+
+    # Default device resolution (will be overridden if device info available)
+    device_width = 1080
+    device_height = 1920
+    try:
+        from engine.adb import run_adb
+        proc = await run_adb("shell", "wm", "size", timeout=5.0)
+        # Output: "Physical size: 1080x1920" or "Override size: 1080x2400"
+        import re
+        match = re.search(r'(\d+)x(\d+)', proc)
+        if match:
+            device_width = int(match.group(1))
+            device_height = int(match.group(2))
+    except Exception:
+        pass  # use defaults
+
+    # Call the AI engine
+    from engine.ai import analyze_keyboard_screenshot
+    result = await analyze_keyboard_screenshot(full_path, device_width, device_height)
+
+    if not result.get("success"):
+        return {
+            "success": False,
+            "error": result.get("error", "Unknown AI error"),
+            "raw_response": result.get("raw_response", ""),
+        }
+
+    ai_keys = result.get("keys", {})
+
+    # Merge AI keys with existing mapping (AI overrides existing, preserves only unknowns)
+    existing_keys = {}
+    raw = row["keys_json"]
+    if raw:
+        try:
+            existing_keys = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            existing_keys = {}
+
+    # AI keys take precedence; keep any existing keys not covered by AI
+    merged = {**existing_keys, **ai_keys}
+
+    # Save to DB
+    await db.execute(
+        "UPDATE keyboard_mappings SET keys_json=?, updated_at=datetime('now') WHERE id=?",
+        (json.dumps(merged, ensure_ascii=False), mapping_id),
+    )
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": f"AI mapped {len(ai_keys)} keys",
+        "keys": ai_keys,
+        "total_keys": len(merged),
+        "raw_response": result.get("raw_response", ""),
+    }

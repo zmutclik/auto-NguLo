@@ -125,6 +125,22 @@
                 </button>
                 <button @click="resetMapping()" class="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg px-4 py-2.5 transition-colors">🔄 Reset All Keys</button>
 
+                <!-- AI Auto-Map Button -->
+                <div class="border-t border-surface-border pt-3 mt-1">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs text-slate-400">🤖 AI Auto-Map</span>
+                    </div>
+                    <button @click="aiMapKeys()" :disabled="!screenshotPath || aiMapping"
+                        class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-lg px-4 py-3 transition-all shadow-lg shadow-purple-500/25 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
+                        <span x-show="!aiMapping">🤖 Scan Keyboard with AI</span>
+                        <span x-show="aiMapping" class="flex items-center justify-center gap-2">
+                            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                            Analyzing...
+                        </span>
+                    </button>
+                    <p x-show="aiStatus" class="text-xs mt-1.5" :class="aiStatus.startsWith('✅')?'text-success':'text-danger'" x-text="aiStatus"></p>
+                </div>
+
                 <div class="border-t border-surface-border pt-3 mt-1">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-xs text-slate-400">🧪 Test Tap</span>
@@ -185,6 +201,9 @@
             saving: false,
             savedMsg: '',
             deviceResolution: { w: 1080, h: 1920 },
+            // AI mapping
+            aiMapping: false,
+            aiStatus: '',
             // Screenshot img dims (set on load)
             imgW: 1080,
             imgH: 1920,
@@ -400,6 +419,34 @@
                 this.screenshotPath = '';
                 const mapping = this.getCurrentMapping();
                 if (mapping) mapping._screenshot_path = '';
+                this.aiStatus = '';
+            },
+
+            async aiMapKeys() {
+                if (!this.screenshotPath) {
+                    this.aiStatus = '❌ Upload screenshot dulu';
+                    return;
+                }
+                this.aiMapping = true;
+                this.aiStatus = '⏳ Mengirim ke AI...';
+                try {
+                    const r = await fetch(`/api/keyboard/${this.currentMappingId}/ai-map?image_path=${encodeURIComponent(this.screenshotPath)}`, {
+                        method: 'POST',
+                    });
+                    const data = await r.json();
+                    if (data.success) {
+                        this.currentKeys = data.keys || {};
+                        this.aiStatus = `✅ AI berhasil mapping ${data.total_keys || Object.keys(data.keys || {}).length} keys!`;
+                        // Refresh the mapping from server
+                        await this.loadMappings();
+                        this.switchTab(this.activeTab);
+                    } else {
+                        this.aiStatus = `❌ Gagal: ${data.error || 'unknown'}`;
+                    }
+                } catch(e) {
+                    this.aiStatus = `❌ Error: ${e.message || e}`;
+                }
+                this.aiMapping = false;
             },
         };
     }

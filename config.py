@@ -4,6 +4,13 @@ Reads from environment variables with sensible defaults for Termux deployment.
 """
 import os
 
+# Load .env file if present (python-dotenv required)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # ---- Server ----
 HOST = os.getenv("ANGULO_HOST", "0.0.0.0")
 PORT = int(os.getenv("ANGULO_PORT", "8000"))
@@ -27,3 +34,8 @@ LOG_DIR = os.getenv("ANGULO_LOG_DIR", "data/logs")
 
 # ---- CORS (for remote access) ----
 CORS_ORIGINS = os.getenv("ANGULO_CORS", "*").split(",")
+
+# ---- AI / LLM ----
+AI_URL = os.getenv("AI_URL", "")
+AI_KEY = os.getenv("AI_KEY", "")
+AI_MODEL = os.getenv("AI_MODEL", "")
