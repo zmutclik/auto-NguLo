@@ -1,645 +1,38 @@
 """
 Script Executor — walks through actions of a script and executes them.
 Supports both real (ADB/uiautomator2) and mock mode for Termux dev.
+
+Architecture (refactored):
+  engine/adb.py            → ADB communication layer
+  engine/input_injector.py → sendevent fallback, key mappings, run_adb_input()
+  engine/vision.py         → screenshot capture & template matching
+  engine/variables.py      → global variable store (load/save)
+  engine/keyboard_cache.py → keyboard mapping cache from DB
+  engine/executor.py       → ScriptExecutor class (this file — dispatch + orchestration)
 """
 import asyncio
 import json
-import os
-import time
 import re
-import tempfile
-import pathlib
-import threading
+import time
 from typing import Callable, Optional
 
-# Keyboard mapping cache: loaded from DB once and cached
-_keyboard_mapping_cache: dict[int, dict] = {}  # mapping_id → keys dict
-_keyboard_mapping_cache_lock = threading.Lock()
-
-# ---- Global shared variable store (persisted to file) ----
-_GLOBAL_VARS_FILE = pathlib.Path("data/variables/global.json")
-_global_vars_lock = threading.Lock()
-
-
-def _load_global_vars() -> dict:
-    """Load global variables from JSON file. Returns empty dict if not found."""
-    try:
-        if _GLOBAL_VARS_FILE.exists():
-            return json.loads(_GLOBAL_VARS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return {}
-
-
-def _save_global_vars(variables: dict) -> None:
-    """Save global variables to JSON file (thread-safe)."""
-    try:
-        _GLOBAL_VARS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with _global_vars_lock:
-            _GLOBAL_VARS_FILE.write_text(
-                json.dumps(variables, ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-    except Exception:
-        pass
-
-# Image processing — OpenCV preferred (fast), Pillow+numpy as fallback for template matching
-import numpy as np
-_NUMPY_AVAILABLE = True
-
-try:
-    import cv2
-    _OPENCV_AVAILABLE = True
-except ImportError:
-    _OPENCV_AVAILABLE = False
-
-try:
-    from PIL import Image
-    _PIL_AVAILABLE = True
-except ImportError:
-    _PIL_AVAILABLE = False
-
-# Allow Pillow to load partially truncated/corrupt images (e.g. incomplete ADB pull)
-if _PIL_AVAILABLE:
-    try:
-        from PIL import ImageFile
-        ImageFile.LOAD_TRUNCATED_IMAGES = True
-    except ImportError:
-        pass
-
-# Template matching available if we have either OpenCV or (numpy + Pillow)
-_TEMPLATE_MATCH_AVAILABLE = _OPENCV_AVAILABLE or (_NUMPY_AVAILABLE and _PIL_AVAILABLE)
-
-# ---- ADB Helper utilities ----
-
-# Combo action → ADB keyevent sequences
-COMBO_KEYS = {
-    "select_all":     ["KEYCODE_CTRL_LEFT", "KEYCODE_A", "KEYCODE_CTRL_LEFT"],
-    "copy":           ["KEYCODE_CTRL_LEFT", "KEYCODE_C", "KEYCODE_CTRL_LEFT"],
-    "paste":          ["KEYCODE_CTRL_LEFT", "KEYCODE_V", "KEYCODE_CTRL_LEFT"],
-    "cut":            ["KEYCODE_CTRL_LEFT", "KEYCODE_X", "KEYCODE_CTRL_LEFT"],
-    "undo":           ["KEYCODE_CTRL_LEFT", "KEYCODE_Z", "KEYCODE_CTRL_LEFT"],
-    "back":           ["KEYCODE_BACK"],
-    "home":           ["KEYCODE_HOME"],
-    "recents":        ["KEYCODE_APP_SWITCH"],
-    "notifications":  ["KEYCODE_NOTIFICATION"],
-    "enter":          ["KEYCODE_ENTER"],
-    "delete":         ["KEYCODE_DEL"],
-    "tab":            ["KEYCODE_TAB"],
-    "escape":         ["KEYCODE_ESCAPE"],
-    "volume_up":      ["KEYCODE_VOLUME_UP"],
-    "volume_down":    ["KEYCODE_VOLUME_DOWN"],
-    "power":          ["KEYCODE_POWER"],
-    "screenshot":     ["KEYCODE_VOLUME_DOWN", "KEYCODE_POWER"],
-}
-
-# Map user-friendly key names → Android KeyEvent constant names
-KEY_NAME_MAP = {
-    "HOME":           "KEYCODE_HOME",
-    "BACK":           "KEYCODE_BACK",
-    "RECENTS":        "KEYCODE_APP_SWITCH",
-    "ENTER":          "KEYCODE_ENTER",
-    "DELETE":         "KEYCODE_DEL",
-    "TAB":            "KEYCODE_TAB",
-    "ESCAPE":         "KEYCODE_ESCAPE",
-    "SPACE":          "KEYCODE_SPACE",
-    "VOLUME_UP":      "KEYCODE_VOLUME_UP",
-    "VOLUME_DOWN":    "KEYCODE_VOLUME_DOWN",
-    "VOLUME_MUTE":    "KEYCODE_VOLUME_MUTE",
-    "POWER":          "KEYCODE_POWER",
-    "MENU":           "KEYCODE_MENU",
-    "SEARCH":         "KEYCODE_SEARCH",
-    "CAMERA":         "KEYCODE_CAMERA",
-    "FOCUS":          "KEYCODE_FOCUS",
-    "NOTIFICATION":   "KEYCODE_NOTIFICATION",
-    "DPAD_UP":        "KEYCODE_DPAD_UP",
-    "DPAD_DOWN":      "KEYCODE_DPAD_DOWN",
-    "DPAD_LEFT":      "KEYCODE_DPAD_LEFT",
-    "DPAD_RIGHT":     "KEYCODE_DPAD_RIGHT",
-    "DPAD_CENTER":    "KEYCODE_DPAD_CENTER",
-    "MEDIA_PLAY":     "KEYCODE_MEDIA_PLAY",
-    "MEDIA_PAUSE":    "KEYCODE_MEDIA_PAUSE",
-    "MEDIA_NEXT":     "KEYCODE_MEDIA_NEXT",
-    "MEDIA_PREVIOUS": "KEYCODE_MEDIA_PREVIOUS",
-}
-
-
-# Cached device capabilities
-_inject_perms_granted: bool = False
-# sendevent device paths (cached after first detection)
-_device_touch_event: str | None = None   # e.g. /dev/input/event2
-_device_key_event: str | None = None     # e.g. /dev/input/event0
-_device_max_x: int = 1080
-_device_max_y: int = 1920
-_sendevent_available: bool | None = None
-
-# Android keycode → Linux input event key code mapping (for sendevent fallback)
-_KEYCODE_TO_LINUX = {
-    # Alphabet keys
-    "KEYCODE_A": 30, "KEYCODE_B": 48, "KEYCODE_C": 46, "KEYCODE_D": 32,
-    "KEYCODE_E": 18, "KEYCODE_F": 33, "KEYCODE_G": 34, "KEYCODE_H": 35,
-    "KEYCODE_I": 23, "KEYCODE_J": 36, "KEYCODE_K": 37, "KEYCODE_L": 38,
-    "KEYCODE_M": 50, "KEYCODE_N": 49, "KEYCODE_O": 24, "KEYCODE_P": 25,
-    "KEYCODE_Q": 16, "KEYCODE_R": 19, "KEYCODE_S": 31, "KEYCODE_T": 20,
-    "KEYCODE_U": 22, "KEYCODE_V": 47, "KEYCODE_W": 17, "KEYCODE_X": 45,
-    "KEYCODE_Y": 21, "KEYCODE_Z": 44,
-    # Numbers
-    "KEYCODE_0": 11, "KEYCODE_1": 2, "KEYCODE_2": 3, "KEYCODE_3": 4,
-    "KEYCODE_4": 5, "KEYCODE_5": 6, "KEYCODE_6": 7, "KEYCODE_7": 8,
-    "KEYCODE_8": 9, "KEYCODE_9": 10,
-    # Navigation / function
-    "KEYCODE_HOME": 102, "KEYCODE_BACK": 158, "KEYCODE_ENTER": 28,
-    "KEYCODE_DEL": 14, "KEYCODE_TAB": 15, "KEYCODE_ESCAPE": 1,
-    "KEYCODE_SPACE": 57, "KEYCODE_VOLUME_UP": 115, "KEYCODE_VOLUME_DOWN": 114,
-    "KEYCODE_POWER": 116, "KEYCODE_MENU": 139, "KEYCODE_SEARCH": 217,
-    "KEYCODE_DPAD_UP": 103, "KEYCODE_DPAD_DOWN": 108,
-    "KEYCODE_DPAD_LEFT": 105, "KEYCODE_DPAD_RIGHT": 106,
-    "KEYCODE_DPAD_CENTER": 28, "KEYCODE_APP_SWITCH": 187,
-    "KEYCODE_NOTIFICATION": 83,
-    # Media
-    "KEYCODE_MEDIA_PLAY": 207, "KEYCODE_MEDIA_PAUSE": 119,
-    "KEYCODE_MEDIA_NEXT": 163, "KEYCODE_MEDIA_PREVIOUS": 165,
-    # Modifiers (Ctrl, Alt, etc.) — approximate
-    "KEYCODE_CTRL_LEFT": 29, "KEYCODE_CTRL_RIGHT": 97,
-    "KEYCODE_ALT_LEFT": 56, "KEYCODE_ALT_RIGHT": 100,
-    "KEYCODE_SHIFT_LEFT": 42, "KEYCODE_SHIFT_RIGHT": 54,
-}
-
-async def _try_grant_inject_permission(serial: str | None = None) -> bool:
-    """Try multiple ways to grant INJECT_EVENTS permission to shell."""
-    global _inject_perms_granted
-    if _inject_perms_granted:
-        return True
-
-    adb_prefix = ("-s", serial) if serial else ()
-
-    # Method 1: appops (Android 4.4+)
-    try:
-        proc = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                "adb", *(adb_prefix + ("shell", "appops", "set", "com.android.shell", "INJECT_EVENTS", "allow")),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            ),
-            timeout=3.0,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=3.0)
-        if proc.returncode == 0:
-            _inject_perms_granted = True
-            return True
-    except Exception:
-        pass
-
-    # Method 2: settings put global (some ROMs)
-    try:
-        proc = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                "adb", *(adb_prefix + ("shell", "settings", "put", "global",
-                "inject_events_whitelist", "com.android.shell")),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            ),
-            timeout=3.0,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=3.0)
-    except Exception:
-        pass
-
-    return False
-
-async def _detect_sendevent(serial: str | None = None) -> bool:
-    """Detect if sendevent injection is available (no root needed on many devices)."""
-    global _sendevent_available, _device_touch_event, _device_key_event
-    global _device_max_x, _device_max_y
-
-    if _sendevent_available is not None:
-        return _sendevent_available
-
-    adb_prefix = ("-s", serial) if serial else ()
-
-    # 1. Check if getevent works (indicates input group access)
-    try:
-        proc = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                "adb", *(adb_prefix + ("shell", "getevent", "-p")),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            ),
-            timeout=4.0,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=4.0)
-        out = stdout.decode("utf-8", errors="replace")
-        print(f"[_detect_sendevent] getevent -p raw output ({len(out)} bytes):")
-        # Print first 2000 chars for debugging
-        print(out[:2000])
-    except Exception as e:
-        print(f"[_detect_sendevent] getevent -p failed: {e}")
-        _sendevent_available = False
-        return False
-
-    # 2. Parse: find touchscreen and keyboard devices
-    lines = out.split("\n")
-    current_dev = None
-    current_name = ""
-    current_keys = {}
-    max_abs_x = 0
-    max_abs_y = 0
-
-    # Device candidates
-    best_key_dev = None          # device that supports POWER/VOLUME keys
-    best_key_name = ""
-
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if line.startswith("add device"):
-            current_dev = line.split(":", 1)[1].strip()
-            current_name = ""
-        elif line.startswith("name:"):
-            current_name = line.split(":", 1)[1].strip().strip('"')
-            if "touch" in current_name.lower() or "fts" in current_name.lower():
-                _device_touch_event = current_dev
-        elif line.startswith("keyboard") and not _device_key_event:
-            if current_dev and not _device_key_event:
-                _device_key_event = current_dev
-        elif "ABS_MT_POSITION_X" in line or "ABS_X" in line:
-            parts = line.split(",")
-            for p in parts:
-                p = p.strip()
-                if p.startswith("max "):
-                    try:
-                        val = int(p.split()[-1])
-                        if val > max_abs_x:
-                            max_abs_x = val
-                    except ValueError:
-                        pass
-        elif "ABS_MT_POSITION_Y" in line or "ABS_Y" in line:
-            parts = line.split(",")
-            for p in parts:
-                p = p.strip()
-                if p.startswith("max "):
-                    try:
-                        val = int(p.split()[-1])
-                        if val > max_abs_y:
-                            max_abs_y = val
-                    except ValueError:
-                        pass
-
-    # 2.5 Find the device that supports POWER (116) / VOLUME (114/115) keys
-    # Hardware keys often use gpio-keys, not the main keyboard/touch input
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if line.startswith("add device"):
-            current_dev = line.split(":", 1)[1].strip()
-            current_name = ""
-        elif line.startswith("name:"):
-            current_name = line.split(":", 1)[1].strip().strip('"')
-        elif line.startswith("events:"):
-            # events: EV_KEY (0001): 0001 0002 ... 0072 0073 ... etc.
-            # Keys are space-separated hex codes after "EV_KEY (0001):"
-            m = re.search(r"EV_KEY\s*\(0001\):\s*(.*)", line)
-            if m and current_dev:
-                key_codes = [int(k, 16) for k in m.group(1).split()]
-                has_power = 116 in key_codes
-                has_vol_down = 114 in key_codes
-                has_vol_up = 115 in key_codes
-                if has_power or has_vol_down:
-                    best_key_dev = current_dev
-                    best_key_name = current_name
-                    print(f"[_detect_sendevent] found hardware keys device: {best_key_dev} ({best_key_name}) — power={has_power}, vol_down={has_vol_down}, vol_up={has_vol_up}")
-
-    # 3. Get screen resolution as fallback for max x/y
-    try:
-        proc2 = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                "adb", *(adb_prefix + ("shell", "wm", "size")),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            ),
-            timeout=3.0,
-        )
-        stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=3.0)
-        size_str = stdout2.decode("utf-8", errors="replace").strip()
-        m = re.search(r"(\d+)\s*[×x]\s*(\d+)", size_str)
-        if m:
-            _device_max_x = int(m.group(1))
-            _device_max_y = int(m.group(2))
-    except Exception:
-        pass
-
-    # If we found a dedicated hardware keys device (gpio-keys), prefer it for key events
-    if best_key_dev:
-        _device_key_event = best_key_dev
-        print(f"[_detect_sendevent] using hardware keys device: {best_key_dev} ({best_key_name})")
-
-    if max_abs_x > 0:
-        _device_max_x = max_abs_x
-    if max_abs_y > 0:
-        _device_max_y = max_abs_y
-
-    # sendevent is available if we found at least a touch device
-    if _device_touch_event:
-        _sendevent_available = True
-        print(f"[_detect_sendevent] OK — touch={_device_touch_event}, key={_device_key_event}, max={_device_max_x}x{_device_max_y}")
-        return True
-
-    _sendevent_available = False
-    print(f"[_detect_sendevent] FAILED — no touch device found. touch={_device_touch_event}, key={_device_key_event}")
-    return False
-
-async def _run_adb(*args, timeout: float = 5.0) -> str:
-    """Run ADB command asynchronously, return stdout. Raises RuntimeError on failure."""
-    try:
-        proc = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                "adb", *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            ),
-            timeout=timeout,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        if proc.returncode != 0:
-            err_msg = stderr.decode("utf-8", errors="replace").strip()
-            if not err_msg:
-                err_msg = stdout.decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"ADB exit {proc.returncode}: {err_msg}")
-        return stdout.decode("utf-8", errors="replace").strip()
-    except asyncio.TimeoutError:
-        raise RuntimeError(f"ADB timeout after {timeout}s: adb {' '.join(args)}")
-    except (FileNotFoundError, OSError) as e:
-        raise RuntimeError(f"ADB not found: {e}")
-    except RuntimeError:
-        raise
-    except Exception as e:
-        raise RuntimeError(f"ADB unexpected error: {e}")
-
-async def _send_event_cmd(serial: str | None, dev: str, ev_type: int, ev_code: int, ev_value: int):
-    """Inject a single input event via /dev/input/eventN — no root needed if in input group."""
-    adb_prefix = ("-s", serial) if serial else ()
-    cmd = f"sendevent {dev} {ev_type} {ev_code} {ev_value}"
-    print(f"[sendevent] adb shell {cmd}")
-    await _run_adb(*(adb_prefix + ("shell", cmd)), timeout=3.0)
-
-async def _sendevent_key(serial: str | None, android_keycode: str):
-    """
-    Inject a key event using sendevent (press + release).
-    Falls back to KEYCODE_HOME if unknown.
-    """
-    dev = _device_key_event or _device_touch_event
-    if not dev:
-        raise RuntimeError("No input device found for sendevent")
-
-    linux_code = _KEYCODE_TO_LINUX.get(android_keycode, 102)  # default HOME
-    print(f"[sendevent_key] android_keycode={android_keycode} → linux_code={linux_code}, dev={dev}")
-
-    # Key down
-    await _send_event_cmd(serial, dev, 1, linux_code, 1)   # EV_KEY = 1, value=1 (down)
-    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN = 0
-    # Key up
-    await _send_event_cmd(serial, dev, 1, linux_code, 0)   # EV_KEY = 1, value=0 (up)
-    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN = 0
-
-async def _sendevent_key_down(serial: str | None, android_keycode: str):
-    """Press a key (down only, no release). For multi-key combos."""
-    dev = _device_key_event or _device_touch_event
-    if not dev:
-        raise RuntimeError("No input device found for sendevent")
-    linux_code = _KEYCODE_TO_LINUX.get(android_keycode, 102)
-    print(f"[sendevent_key_down] {android_keycode} → linux={linux_code}, dev={dev}")
-    await _send_event_cmd(serial, dev, 1, linux_code, 1)   # EV_KEY down
-    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN
-
-async def _sendevent_key_up(serial: str | None, android_keycode: str):
-    """Release a key (up only). For multi-key combos."""
-    dev = _device_key_event or _device_touch_event
-    if not dev:
-        raise RuntimeError("No input device found for sendevent")
-    linux_code = _KEYCODE_TO_LINUX.get(android_keycode, 102)
-    print(f"[sendevent_key_up] {android_keycode} → linux={linux_code}, dev={dev}")
-    await _send_event_cmd(serial, dev, 1, linux_code, 0)   # EV_KEY up
-    await _send_event_cmd(serial, dev, 0, 0, 0)             # EV_SYN
-
-async def _sendevent_combo(serial: str | None, keys: list[str], hold_ms: int = 150):
-    """
-    Execute a simultaneous key combo via sendevent.
-    Presses all keys together, holds, then releases all.
-    This is needed because ADB's `input keyevent` only supports
-    press-and-release per key, not holding multiple keys at once.
-    """
-    if not keys:
-        return
-
-    # Ensure sendevent is detected
-    if not await _detect_sendevent(serial):
-        raise RuntimeError("sendevent not available for combo")
-
-    # Press all keys
-    for key in keys:
-        await _sendevent_key_down(serial, key)
-
-    # Hold
-    await asyncio.sleep(hold_ms / 1000.0)
-
-    # Release all keys (reverse order)
-    for key in reversed(keys):
-        await _sendevent_key_up(serial, key)
-
-async def _sendevent_text_char(serial: str | None, ch: str):
-    """Inject a single text character via sendevent (simplified — uses keyevent)."""
-    if ch == " ":
-        await _sendevent_key(serial, "KEYCODE_SPACE")
-    elif ch == "\n":
-        await _sendevent_key(serial, "KEYCODE_ENTER")
-    else:
-        upper_ch = ch.upper()
-        keycode = f"KEYCODE_{upper_ch}"
-        if keycode in _KEYCODE_TO_LINUX:
-            # TODO: handle shift for lowercase — for now just send uppercase keyevent
-            await _sendevent_key(serial, keycode)
-            # For lowercase, ADB input text handles this; sendevent needs manual shift handling
-        else:
-            # Try sending as-is via KEYCODE_ prefix
-            await _sendevent_key(serial, f"KEYCODE_{upper_ch}")
-
-async def _sendevent_tap(serial: str | None, x: int, y: int):
-    """
-    Inject a tap at (x, y) using sendevent to the touchscreen device.
-    Converts screen coordinates to absolute touch coordinates.
-    """
-    dev = _device_touch_event
-    if not dev:
-        raise RuntimeError("No touchscreen device found for sendevent")
-
-    # Scale coordinates to device max range
-    # Most touchscreens use 0..max range; some use different ranges. We use detected max.
-    abs_x = max(0, min(x, _device_max_x))
-    abs_y = max(0, min(y, _device_max_y))
-
-    # Touch down sequence:
-    # ABS_MT_TRACKING_ID = 57 (start tracking)
-    # ABS_MT_POSITION_X = 53, ABS_MT_POSITION_Y = 54
-    # BTN_TOUCH = 330
-    await _send_event_cmd(serial, dev, 3, 57, 0)        # ABS_MT_TRACKING_ID
-    await _send_event_cmd(serial, dev, 3, 53, abs_x)     # ABS_MT_POSITION_X
-    await _send_event_cmd(serial, dev, 3, 54, abs_y)     # ABS_MT_POSITION_Y
-    await _send_event_cmd(serial, dev, 1, 330, 1)        # BTN_TOUCH down
-    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
-
-    # Touch up sequence:
-    await _send_event_cmd(serial, dev, 3, 57, -1)       # ABS_MT_TRACKING_ID (end)
-    await _send_event_cmd(serial, dev, 1, 330, 0)        # BTN_TOUCH up
-    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
-    await asyncio.sleep(0.03)
-
-async def _sendevent_long_press(serial: str | None, x: int, y: int, duration_ms: int = 500):
-    """
-    Inject a long press at (x, y) using sendevent — touch down, hold, then touch up.
-    Unlike `input swipe X Y X Y DURATION` (which many Android devices treat as a tap),
-    this properly holds the touch for the full duration.
-    """
-    dev = _device_touch_event
-    if not dev:
-        raise RuntimeError("No touchscreen device found for sendevent")
-
-    abs_x = max(0, min(x, _device_max_x))
-    abs_y = max(0, min(y, _device_max_y))
-
-    # Touch down
-    await _send_event_cmd(serial, dev, 3, 57, 0)        # ABS_MT_TRACKING_ID
-    await _send_event_cmd(serial, dev, 3, 53, abs_x)     # ABS_MT_POSITION_X
-    await _send_event_cmd(serial, dev, 3, 54, abs_y)     # ABS_MT_POSITION_Y
-    await _send_event_cmd(serial, dev, 1, 330, 1)        # BTN_TOUCH down
-    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
-
-    # Hold for the specified duration
-    await asyncio.sleep(duration_ms / 1000)
-
-    # Touch up
-    await _send_event_cmd(serial, dev, 3, 57, -1)       # ABS_MT_TRACKING_ID (end)
-    await _send_event_cmd(serial, dev, 1, 330, 0)        # BTN_TOUCH up
-    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
-    await asyncio.sleep(0.03)
-
-async def _sendevent_swipe(serial: str | None, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300):
-    """
-    Inject a swipe gesture using sendevent with linear interpolation.
-    """
-    dev = _device_touch_event
-    if not dev:
-        raise RuntimeError("No touchscreen device found for sendevent")
-
-    # Number of interpolation steps
-    steps = max(5, duration_ms // 16)  # ~60fps touch sampling
-
-    # Touch down at start position
-    sx = max(0, min(x1, _device_max_x))
-    sy = max(0, min(y1, _device_max_y))
-    await _send_event_cmd(serial, dev, 3, 57, 0)        # ABS_MT_TRACKING_ID
-    await _send_event_cmd(serial, dev, 3, 53, sx)        # ABS_MT_POSITION_X
-    await _send_event_cmd(serial, dev, 3, 54, sy)        # ABS_MT_POSITION_Y
-    await _send_event_cmd(serial, dev, 1, 330, 1)        # BTN_TOUCH down
-    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
-
-    # Interpolate positions
-    for i in range(1, steps + 1):
-        t = i / steps
-        cx = max(0, min(int(x1 + (x2 - x1) * t), _device_max_x))
-        cy = max(0, min(int(y1 + (y2 - y1) * t), _device_max_y))
-        await _send_event_cmd(serial, dev, 3, 53, cx)    # ABS_MT_POSITION_X
-        await _send_event_cmd(serial, dev, 3, 54, cy)    # ABS_MT_POSITION_Y
-        await _send_event_cmd(serial, dev, 0, 0, 0)      # EV_SYN
-        if i < steps:
-            await asyncio.sleep(duration_ms / 1000 / steps)
-
-    # Touch up
-    await _send_event_cmd(serial, dev, 3, 57, -1)       # ABS_MT_TRACKING_ID (end)
-    await _send_event_cmd(serial, dev, 1, 330, 0)        # BTN_TOUCH up
-    await _send_event_cmd(serial, dev, 0, 0, 0)          # EV_SYN
-    await asyncio.sleep(0.03)
-
-async def _run_adb_input(serial: str | None, *input_args, timeout: float = 5.0) -> str:
-    """
-    Run an 'adb shell input <args>' command.
-    Falls back to sendevent (no root needed) if INJECT_EVENTS permission is denied.
-    
-    Args:
-        serial: ADB device serial (or None for default device)
-        *input_args: Arguments to the `input` subcommand (e.g. "tap", "100", "200")
-    """
-    # Build ADB prefix args
-    adb_prefix = ("-s", serial) if serial else ()
-
-    # Strategy 1: Direct call
-    try:
-        return await _run_adb(*(adb_prefix + ("shell", "input") + input_args), timeout=timeout)
-    except RuntimeError as e:
-        err_str = str(e)
-        if "INJECT_EVENTS" not in err_str and "SecurityException" not in err_str:
-            raise
-
-    # Strategy 2: Try granting INJECT_EVENTS permission, then retry direct call
-    if not _inject_perms_granted:
-        granted = await _try_grant_inject_permission(serial)
-        if granted:
-            try:
-                return await _run_adb(*(adb_prefix + ("shell", "input") + input_args), timeout=timeout)
-            except RuntimeError as e:
-                err_str = str(e)
-                if "INJECT_EVENTS" not in err_str and "SecurityException" not in err_str:
-                    raise
-
-    # Strategy 3: Fallback to sendevent (no root needed — works via input group)
-    sendevent_ok = await _detect_sendevent(serial)
-    if sendevent_ok:
-        if input_args[0] == "keyevent":
-            keycode = input_args[1]
-            await _sendevent_key(serial, keycode)
-            return ""
-        elif input_args[0] == "text":
-            text = input_args[1]
-            for ch in text:
-                await _sendevent_text_char(serial, ch)
-                await asyncio.sleep(0.02)
-            return ""
-        elif input_args[0] == "tap":
-            x, y = int(input_args[1]), int(input_args[2])
-            await _sendevent_tap(serial, x, y)
-            return ""
-        elif input_args[0] == "swipe":
-            x1, y1, x2, y2 = int(input_args[1]), int(input_args[2]), int(input_args[3]), int(input_args[4])
-            duration_ms = int(input_args[5]) if len(input_args) > 5 else 300
-            # Detect long press: when swipe is from a point to (nearly) the same point
-            if abs(x1 - x2) <= 1 and abs(y1 - y2) <= 1 and duration_ms > 100:
-                await _sendevent_long_press(serial, x1, y1, duration_ms)
-            else:
-                await _sendevent_swipe(serial, x1, y1, x2, y2, duration_ms)
-            return ""
-
-    # Strategy 4: Give up with helpful error
-    raise RuntimeError(
-        f"INJECT_EVENTS permission denied. This device does not allow ADB input injection.\n"
-        f"Try: 1) Enable 'USB debugging (Security Settings)' in Developer Options\n"
-        f"     2) Settings → Developer options → Allow screen overlays on settings"
-    )
-
-
-async def adb_available() -> bool:
-    """Check if ADB is available and a device is connected."""
-    try:
-        out = await _run_adb("devices", timeout=3.0)
-    except RuntimeError:
-        return False
-    lines = out.strip().split("\n")
-    for line in lines[1:]:
-        if "\tdevice" in line:
-            return True
-    return False
+from engine.adb import run_adb, get_device_serial
+from engine.input_injector import (
+    COMBO_KEYS, KEY_NAME_MAP, KEYCODE_TO_LINUX,
+    run_adb_input, sendevent_combo,
+)
+from engine.vision import (
+    template_match_available,
+    match_template_on_screen,
+)
+from engine.variables import load_global_vars, save_global_vars
+from engine.keyboard_cache import load_keyboard_mapping
 
 
 class ScriptExecutor:
     """
     Executes a script's actions in order.
-    
+
     Action types supported:
     - tap: tap at (x, y), optionally using previous match result
     - swipe: swipe from (x,y) to (x2,y2)
@@ -667,7 +60,7 @@ class ScriptExecutor:
         self.variables: dict[str, str] = {}
         self.last_match_result: tuple[float, float] | None = None
         self.log_callback: Optional[Callable] = None
-        self.script_loader: Optional[Callable] = None  # async (script_id) -> script_dict
+        self.script_loader: Optional[Callable] = None  # async (script_name) -> script_dict
         self._stop_requested = False
         self._current_action_idx = 0
         self._serial: str | None = None  # ADB device serial
@@ -676,15 +69,7 @@ class ScriptExecutor:
         """Discover and cache the ADB device serial."""
         if self._serial:
             return
-        try:
-            out = await _run_adb("devices")
-            lines = out.strip().split("\n")
-            for line in lines[1:]:
-                if "\tdevice" in line:
-                    self._serial = line.split("\t")[0]
-                    break
-        except RuntimeError:
-            pass
+        self._serial = await get_device_serial()
 
     def _adb_args(self, *args) -> tuple:
         """Build ADB args with serial if known."""
@@ -700,53 +85,46 @@ class ScriptExecutor:
         if self.log_callback:
             self.log_callback(level, message)
 
+    # ── Variable resolution ─────────────────────────────────────────
+
     def _resolve_value(self, text: str) -> str:
         """Replace ${var.path.to.field} placeholders with variable values, supporting nested JSON access."""
         def _resolve_single(match):
-            full_path = match.group(1)  # e.g. "randomuser.0.gender"
+            full_path = match.group(1)
             parts = full_path.split(".")
-            var_name = parts[0]          # "randomuser"
-            access_path = parts[1:]      # ["0", "gender"]
+            var_name = parts[0]
+            access_path = parts[1:]
 
             value = self.variables.get(var_name)
             if value is None:
-                return match.group(0)  # keep original if variable not found
+                return match.group(0)
 
-            # No sub-path → return raw value
             if not access_path:
                 return str(value)
 
-            # Try parsing JSON if it looks like JSON
             if isinstance(value, str) and value.strip().startswith(("{", "[")):
                 try:
                     value = json.loads(value)
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-            # Traverse into nested value
             for key in access_path:
-                # Try numeric index for lists
                 if isinstance(value, list):
                     try:
-                        idx = int(key)
-                        value = value[idx]
+                        value = value[int(key)]
                         continue
                     except (ValueError, IndexError):
                         pass
-                # Try dict key
                 if isinstance(value, dict):
                     if key in value:
                         value = value[key]
                         continue
-                    # also try numeric key (for numeric-like strings stored in dict)
                     try:
-                        idx = int(key)
-                        if idx in value:
-                            value = value[idx]
+                        if int(key) in value:
+                            value = value[int(key)]
                             continue
                     except (ValueError, TypeError):
                         pass
-                # Can't traverse further
                 return match.group(0)
 
             return str(value)
@@ -754,20 +132,13 @@ class ScriptExecutor:
         return re.sub(r"\$\{([a-zA-Z_]\w*(?:\.[^.}]+)*)\}", _resolve_single, text)
 
     def _eval_expr(self, value: str) -> str:
-        """
-        Safely evaluate a simple arithmetic expression string (e.g. "0+1", "5*2-3").
-        Supports: +, -, *, /, //, %, ** and parentheses with integer/float operands.
-        Returns the result as a string, or the original value if it's not an expression.
-        """
+        """Safely evaluate a simple arithmetic expression string (e.g. '0+1', '5*2-3')."""
         stripped = value.strip()
-        # Only attempt eval if the string looks like an arithmetic expression
-        # (contains digits and at least one operator, no letters except 'e'/'E' for floats)
         if not stripped:
             return value
         if re.fullmatch(r"[\d\s\+\-\*\/\%\(\)\.eE]+", stripped):
             try:
                 result = eval(stripped, {"__builtins__": {}}, {})  # noqa: S307
-                # Return int string if result is a whole number
                 if isinstance(result, float) and result.is_integer():
                     return str(int(result))
                 return str(result)
@@ -775,7 +146,7 @@ class ScriptExecutor:
                 pass
         return value
 
-    # ---- Android input (real via ADB, or mock) ----
+    # ── Android input (real via ADB, or mock) ────────────────────────
 
     async def _tap(self, x: float, y: float):
         if self.mock_mode:
@@ -783,7 +154,7 @@ class ScriptExecutor:
             await asyncio.sleep(0.1)
         else:
             self._log("info", f"  👆 tap({x:.0f}, {y:.0f})")
-            await _run_adb_input(self._serial, "tap", str(int(x)), str(int(y)))
+            await run_adb_input(self._serial, "tap", str(int(x)), str(int(y)))
             await asyncio.sleep(0.05)
 
     async def _swipe(self, x1, y1, x2, y2, duration_ms):
@@ -792,7 +163,7 @@ class ScriptExecutor:
             await asyncio.sleep(duration_ms / 1000 * 0.1)
         else:
             self._log("info", f"  👆 swipe({x1:.0f},{y1:.0f} → {x2:.0f},{y2:.0f}) {duration_ms}ms")
-            await _run_adb_input(self._serial, "swipe",
+            await run_adb_input(self._serial, "swipe",
                 str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(int(duration_ms)))
             await asyncio.sleep(duration_ms / 1000)
 
@@ -802,19 +173,15 @@ class ScriptExecutor:
             await asyncio.sleep(duration_ms / 1000 * 0.1)
         else:
             self._log("info", f"  👆 long_press({x:.0f}, {y:.0f}) {duration_ms}ms")
-            # Offset end coordinate by 1 pixel — Android ignores duration when start==end
-            # and treats it as a tap. A 1px offset is imperceptible but forces a proper swipe.
             end_x = int(x) + 1
-            await _run_adb_input(self._serial, "swipe",
+            await run_adb_input(self._serial, "swipe",
                 str(int(x)), str(int(y)), str(end_x), str(int(y)), str(int(duration_ms)))
             await asyncio.sleep(duration_ms / 1000)
 
     async def _push_key(self, key_code: str):
-        # Resolve keycode to canonical form
         if key_code.startswith("KEYCODE_"):
             resolved = key_code
         elif key_code.isdigit():
-            # Numeric key code — pass directly to input keyevent (e.g. "66" = ENTER)
             resolved = key_code
         else:
             resolved = KEY_NAME_MAP.get(key_code.upper(), f"KEYCODE_{key_code.upper()}")
@@ -823,419 +190,61 @@ class ScriptExecutor:
             await asyncio.sleep(0.05)
         else:
             self._log("info", f"  ⌨️  keyevent {resolved}")
-            await _run_adb_input(self._serial, "keyevent", resolved)
+            await run_adb_input(self._serial, "keyevent", resolved)
             await asyncio.sleep(0.05)
 
     async def _combo_action(self, action: str):
-        # Lookup combo keys
         keys = COMBO_KEYS.get(action, [f"KEYCODE_{action.upper()}"])
         if self.mock_mode:
             self._log("info", f"  [mock] combo: {action} → {keys}")
             await asyncio.sleep(0.1)
         else:
             self._log("info", f"  ⌨️  combo: {action} → {keys}")
-            # For single-key combos (back, home, etc.), send normally
             if len(keys) == 1:
-                await _run_adb_input(self._serial, "keyevent", keys[0])
+                await run_adb_input(self._serial, "keyevent", keys[0])
                 await asyncio.sleep(0.05)
                 return
 
-            # --- Multi-key combo ---
-            # Strategy 1: `input keycombination` (native Android 7.0+, handles Ctrl+A etc.)
+            # Strategy 1: `input keycombination` (native Android 7.0+)
             try:
                 adb_prefix = ("-s", self._serial) if self._serial else ()
-                await _run_adb(*(adb_prefix + ("shell", "input", "keycombination") + tuple(keys)),
+                await run_adb(*(adb_prefix + ("shell", "input", "keycombination") + tuple(keys)),
                               timeout=5.0)
                 await asyncio.sleep(0.05)
                 return
             except RuntimeError as e:
                 self._log("warn", f"  keycombination failed: {e}")
 
-            # Strategy 2: sendevent for hardware combos (volume+power etc.)
-            #             Filters to keys that have a linux code mapping
-            hw_keys = [k for k in keys if k in _KEYCODE_TO_LINUX]
+            # Strategy 2: sendevent for hardware combos
+            hw_keys = [k for k in keys if k in KEYCODE_TO_LINUX]
             if hw_keys and len(hw_keys) == len(keys):
                 try:
-                    await _sendevent_combo(self._serial, hw_keys, hold_ms=500)
+                    await sendevent_combo(self._serial, hw_keys, hold_ms=500)
                     await asyncio.sleep(0.05)
                     return
                 except RuntimeError as e:
                     self._log("warn", f"  sendevent failed: {e}")
 
-            # Strategy 3: Last resort — sequential keyevents (won't hold keys but won't crash)
+            # Strategy 3: sequential fallback
             self._log("warn", f"  ⚠️  falling back to sequential keyevents (combo may not work)")
             for i, key in enumerate(keys):
-                await _run_adb_input(self._serial, "keyevent", key)
+                await run_adb_input(self._serial, "keyevent", key)
                 if i < len(keys) - 1:
                     await asyncio.sleep(0.03)
             await asyncio.sleep(0.05)
 
-    async def _capture_screenshot(self, save_path: str | None = None) -> str:
-        """Capture a screenshot via ADB and return the local file path."""
-        tmp_path = save_path or os.path.join(tempfile.gettempdir(), f"angulo_screen_{time.time():.0f}.png")
-        if self.mock_mode:
-            # In mock mode, create a dummy black image
-            if _PIL_AVAILABLE:
-                img = Image.new('RGB', (1080, 1920), color=(0, 0, 0))
-                img.save(tmp_path, 'PNG')
-            elif _OPENCV_AVAILABLE:
-                img = np.zeros((1920, 1080, 3), dtype=np.uint8)
-                cv2.imwrite(tmp_path, img)
-            else:
-                # Create a minimal valid PNG without any image library
-                import struct, zlib
-                def _make_minimal_png(path):
-                    sig = b'\x89PNG\r\n\x1a\n'
-                    ihdr_data = struct.pack('>IIBBBBB', 1080, 1920, 8, 2, 0, 0, 0)
-                    ihdr_crc = zlib.crc32(b'IHDR' + ihdr_data)
-                    ihdr_chunk = struct.pack('>I', 13) + b'IHDR' + ihdr_data + struct.pack('>I', ihdr_crc)
-                    # black IDAT
-                    raw = b'\x00' * (1080 * 3)
-                    compressed = zlib.compress(b''.join([raw] * 1920))
-                    idat_crc = zlib.crc32(b'IDAT' + compressed)
-                    idat_chunk = struct.pack('>I', len(compressed)) + b'IDAT' + compressed + struct.pack('>I', idat_crc)
-                    iend_crc = zlib.crc32(b'IEND')
-                    iend_chunk = struct.pack('>I', 0) + b'IEND' + struct.pack('>I', iend_crc)
-                    with open(path, 'wb') as f:
-                        f.write(sig + ihdr_chunk + idat_chunk + iend_chunk)
-                _make_minimal_png(tmp_path)
-            return tmp_path
-        # Real mode: adb shell screencap
-        adb_prefix = ("-s", self._serial) if self._serial else ()
-        try:
-            await _run_adb(*(adb_prefix + ("shell", "screencap", "-p", "/sdcard/angulo_tmp.png")), timeout=10.0)
-            await _run_adb(*(adb_prefix + ("pull", "/sdcard/angulo_tmp.png", tmp_path)), timeout=10.0)
-            # Verify the pulled file is valid (not truncated)
-            if os.path.isfile(tmp_path):
-                file_size = os.path.getsize(tmp_path)
-                if file_size < 1024:
-                    raise RuntimeError(f"Screenshot file too small ({file_size} bytes) — likely truncated")
-            # Cleanup remote temp
-            try:
-                await _run_adb(*(adb_prefix + ("shell", "rm", "/sdcard/angulo_tmp.png")), timeout=3.0)
-            except Exception:
-                pass
-        except RuntimeError as e:
-            raise RuntimeError(f"Failed to capture screenshot: {e}")
-        return tmp_path
-
-    def _match_template_numpy(self, screen_path: str, template_path: str) -> tuple:
-        """
-        Pure numpy + Pillow template matching (TM_CCOEFF_NORMED).
-        Uses FFT for cross-correlation and integral images for local variance.
-        Returns (max_score: float, x: int, y: int) — top-left corner of best match.
-        """
-        # Read images with Pillow, convert to grayscale numpy arrays
-        screen_img = Image.open(screen_path).convert('L')
-        template_img = Image.open(template_path).convert('L')
-
-        screen = np.array(screen_img, dtype=np.float64)
-        template = np.array(template_img, dtype=np.float64)
-
-        th, tw = template.shape
-        ih, iw = screen.shape
-
-        rh = ih - th + 1
-        rw = iw - tw + 1
-
-        if rh <= 0 or rw <= 0:
-            return (0.0, 0, 0)
-
-        # ---- Step 1: Cross-correlation numerator via FFT ----
-        t_mean = template.mean()
-        t_std = template.std()
-        if t_std < 1e-10:
-            return (0.0, 0, 0)
-        t_norm = template - t_mean
-
-        # Zero-pad to avoid FFT circular correlation artifacts
-        pad_h, pad_w = ih + th - 1, iw + tw - 1
-        F_screen = np.fft.rfft2(screen, s=(pad_h, pad_w))
-        F_template = np.fft.rfft2(t_norm[::-1, ::-1], s=(pad_h, pad_w))  # flipped for correlation
-        cross_corr = np.fft.irfft2(F_screen * F_template)
-
-        # Crop to valid region
-        numerator = cross_corr[th - 1: th - 1 + rh, tw - 1: tw - 1 + rw]
-
-        # ---- Step 2: Denominator (local image std) via integral images ----
-        integral = np.zeros((ih + 1, iw + 1))
-        integral[1:, 1:] = screen.cumsum(axis=0).cumsum(axis=1)
-
-        integral_sq = np.zeros((ih + 1, iw + 1))
-        integral_sq[1:, 1:] = (screen ** 2).cumsum(axis=0).cumsum(axis=1)
-
-        # All patch sums at once via integral image slicing
-        sums = (integral[th:, tw:] - integral[:rh, tw:]
-                - integral[th:, :rw] + integral[:rh, :rw])
-        sq_sums = (integral_sq[th:, tw:] - integral_sq[:rh, tw:]
-                   - integral_sq[th:, :rw] + integral_sq[:rh, :rw])
-
-        n_pixels = th * tw
-        means = sums / n_pixels
-        vars_ = np.maximum(sq_sums / n_pixels - means ** 2, 0.0)
-        stds = np.sqrt(vars_)
-
-        denominator = t_std * stds * n_pixels
-        valid = denominator > 1e-10
-
-        result = np.zeros((rh, rw))
-        result[valid] = numerator[valid] / denominator[valid]
-
-        # Find best match
-        max_idx = np.argmax(result)
-        max_y, max_x = divmod(max_idx, rw)
-        return (float(result[max_y, max_x]), int(max_x), int(max_y))
-
-    async def _match_template_on_screen(self, template_path: str, threshold: float,
-                                          region: tuple = None) -> tuple:
-        """
-        Match a template image against current screen.
-        Returns (found: bool, x: float, y: float).
-        x, y are the center coordinates of the match (in full-screen coords).
-
-        Uses OpenCV if available, falls back to numpy+Pillow.
-        """
-        if not _TEMPLATE_MATCH_AVAILABLE:
-            self._log("warn", "  ⚠️ No image library available (install opencv-python or Pillow+numpy)")
-            if self.mock_mode:
-                return (True, 540.0, 1200.0)
-            return (False, 0, 0)
-
-        # Resolve template file path
-        template_full_path = template_path
-        if not os.path.isabs(template_path):
-            template_full_path = os.path.join("data", template_path)
-        if not os.path.isfile(template_full_path):
-            raise RuntimeError(f"Template file not found: {template_full_path}")
-
-        # Capture screenshot
-        screen_path = await self._capture_screenshot()
-
-        try:
-            if _OPENCV_AVAILABLE:
-                # ---- OpenCV path (fast) ----
-                screen = cv2.imread(screen_path)
-                template = cv2.imread(template_full_path)
-                if screen is None:
-                    # Try with Pillow if OpenCV can't read (e.g. truncated file)
-                    if _PIL_AVAILABLE:
-                        screen = np.array(Image.open(screen_path).convert('RGB'))[:,:,::-1]  # RGB→BGR
-                        if screen is None or screen.size == 0:
-                            raise RuntimeError(f"Failed to read screenshot from {screen_path}")
-                    else:
-                        raise RuntimeError(f"Failed to read screenshot from {screen_path}")
-                if template is None:
-                    if _PIL_AVAILABLE:
-                        template = np.array(Image.open(template_full_path).convert('RGB'))[:,:,::-1]
-                        if template is None or template.size == 0:
-                            raise RuntimeError(f"Failed to read template from {template_full_path}")
-                    else:
-                        raise RuntimeError(f"Failed to read template from {template_full_path}")
-
-                th, tw = template.shape[:2]
-                sh, sw = screen.shape[:2]
-
-                region_offset_x, region_offset_y = 0, 0
-                if region is not None:
-                    rx, ry, rw_, rh_ = region
-                    rx = max(0, int(rx)); ry = max(0, int(ry))
-                    rw_ = min(int(rw_), sw - rx); rh_ = min(int(rh_), sh - ry)
-                    if rw_ <= 0 or rh_ <= 0:
-                        raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw_},{rh_}) — not within screen {sw}x{sh}")
-                    # Crop both screen AND template to the match region
-                    # (template was captured from full screen, so same crop applies)
-                    screen = screen[ry:ry+rh_, rx:rx+rw_]
-                    if template.shape[0] >= ry + rh_ and template.shape[1] >= rx + rw_:
-                        template = template[ry:ry+rh_, rx:rx+rw_]
-                        th, tw = template.shape[:2]
-                    region_offset_x, region_offset_y = rx, ry
-                    sh, sw = screen.shape[:2]
-                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_} (template cropped to {tw}x{th})")
-
-                if tw > sw or th > sh:
-                    raise RuntimeError(f"Template ({tw}x{th}) larger than search area ({sw}x{sh})")
-
-                result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-                self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
-
-                if max_val >= threshold:
-                    cx = region_offset_x + max_loc[0] + tw / 2.0
-                    cy = region_offset_y + max_loc[1] + th / 2.0
-                    return (True, float(cx), float(cy))
-                return (False, 0.0, 0.0)
-
-            else:
-                # ---- numpy + Pillow path (fallback) ----
-                screen_img = Image.open(screen_path)
-                template_img = Image.open(template_full_path)
-                tw, th = template_img.size  # PIL uses (w, h)
-
-                sw, sh = screen_img.size
-                region_offset_x, region_offset_y = 0, 0
-                template_was_cropped = False
-
-                if region is not None:
-                    rx, ry, rw_, rh_ = region
-                    rx = max(0, int(rx)); ry = max(0, int(ry))
-                    rw_ = min(int(rw_), sw - rx); rh_ = min(int(rh_), sh - ry)
-                    if rw_ <= 0 or rh_ <= 0:
-                        raise RuntimeError(f"Invalid match region: ({rx},{ry},{rw_},{rh_}) — not within screen {sw}x{sh}")
-                    screen_img = screen_img.crop((rx, ry, rx + rw_, ry + rh_))
-                    # Crop both screen AND template to the match region
-                    if template_img.size[0] >= rx + rw_ and template_img.size[1] >= ry + rh_:
-                        template_img = template_img.crop((rx, ry, rx + rw_, ry + rh_))
-                        tw, th = template_img.size
-                        template_was_cropped = True
-                    region_offset_x, region_offset_y = rx, ry
-                    self._log("info", f"  🔲 match region: x={rx} y={ry} w={rw_} h={rh_} (template cropped to {tw}x{th})")
-
-                if tw > screen_img.size[0] or th > screen_img.size[1]:
-                    raise RuntimeError(f"Template ({tw}x{th}) larger than search area")
-
-                # Save cropped screen AND cropped template for numpy loading
-                screen_img.save(screen_path)
-                if template_was_cropped:
-                    # Template was cropped — save to temp file so _match_template_numpy reads the cropped version
-                    import tempfile
-                    tmp_tpl = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-                    template_img.save(tmp_tpl.name)
-                    template_full_path = tmp_tpl.name
-                    _tmp_tpl_path = template_full_path  # for cleanup
-                else:
-                    _tmp_tpl_path = None
-
-                max_val, mx, my = self._match_template_numpy(screen_path, template_full_path)
-                self._log("info", f"  📊 match score: {max_val:.4f} (threshold: {threshold:.2f})")
-
-                # Clean up temp template file
-                if _tmp_tpl_path:
-                    try:
-                        os.unlink(_tmp_tpl_path)
-                    except Exception:
-                        pass
-
-                if max_val >= threshold:
-                    cx = region_offset_x + mx + tw / 2.0
-                    cy = region_offset_y + my + th / 2.0
-                    return (True, float(cx), float(cy))
-                return (False, 0.0, 0.0)
-
-        finally:
-            try:
-                os.unlink(screen_path)
-            except Exception:
-                pass
-
-    async def _screenshot_match(self, template_path: str, threshold: float,
-                                  retry_count: int, retry_delay_ms: int,
-                                  region: tuple = None) -> tuple:
-        """Try to find template on screen. Returns (success, x, y)."""
-        for attempt in range(retry_count):
-            if self._stop_requested:
-                return (False, 0, 0)
-            if self.mock_mode:
-                self._log("info", f"  [mock] match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
-                if _TEMPLATE_MATCH_AVAILABLE:
-                    # Try real matching even in mock mode (but with dummy screenshot)
-                    found, mx, my = await self._match_template_on_screen(template_path, threshold, region)
-                    if found:
-                        self.last_match_result = (mx, my)
-                        return (True, mx, my)
-                else:
-                    self.last_match_result = (540.0, 1200.0)
-                    self._log("info", f"  [mock] → FOUND (simulated)")
-                    return (True, 540.0, 1200.0)
-            else:
-                self._log("info", f"  🔍 match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
-                found, mx, my = await self._match_template_on_screen(template_path, threshold, region)
-                if found:
-                    self.last_match_result = (mx, my)
-                    self._log("info", f"  ✅ match found at ({mx:.0f}, {my:.0f})")
-                    return (True, mx, my)
-
-            if attempt < retry_count - 1:
-                self._log("info", f"  ⏳ retry in {retry_delay_ms}ms...")
-                await asyncio.sleep(retry_delay_ms / 1000)
-        return (False, 0, 0)
-
-    async def _resolve_coords_from_template(self, action: dict) -> tuple:
-        """
-        For tap/swipe/long_press actions that have template_path set,
-        resolve X/Y coordinates by matching template on screen.
-        Returns (x, y) or (x, y, x2, y2) for swipe with two templates.
-
-        If no template_path is set, returns the raw coords from action.
-        """
-        tpl = action.get("template_path", "")
-        if not tpl:
-            # No template — use raw coordinates
-            if action.get("action_type") == "swipe":
-                return (action.get("x", 0), action.get("y", 0),
-                        action.get("x2", 0), action.get("y2", 0))
-            return (action.get("x", 0), action.get("y", 0))
-
-        threshold = action.get("match_threshold", 0.80)
-        retry = action.get("retry_count", 1)
-        retry_delay = action.get("retry_delay_ms", 1000)
-
-        if action.get("action_type") == "swipe":
-            # Swipe: match start point from template
-            found, x1, y1 = await self._screenshot_match(tpl, threshold, retry, retry_delay)
-            if not found:
-                raise RuntimeError(f"Template '{tpl}' not found on screen for swipe start point")
-            # For end point, use explicit x2/y2 or also from a second template
-            tpl2 = action.get("template_path2", "")
-            if tpl2:
-                found2, x2, y2 = await self._screenshot_match(tpl2, threshold, retry, retry_delay)
-                if not found2:
-                    raise RuntimeError(f"Template '{tpl2}' not found on screen for swipe end point")
-            else:
-                x2 = action.get("x2", 0) or x1
-                y2 = action.get("y2", 0) or y1
-            return (x1, y1, x2, y2)
-        else:
-            # Tap or long_press: single point
-            found, x, y = await self._screenshot_match(tpl, threshold, retry, retry_delay)
-            if not found:
-                raise RuntimeError(f"Template '{tpl}' not found on screen for {action.get('action_type')}")
-            return (x, y)
-
-    async def _fetch_api(self, url: str, method: str, headers: str, body: str) -> str:
-        import httpx
-        resolved_url = self._resolve_value(url)
-        try:
-            headers_dict = json.loads(headers) if headers else {}
-        except json.JSONDecodeError:
-            headers_dict = {}
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                if method in ("GET", "DELETE"):
-                    resp = await client.request(method, resolved_url, headers=headers_dict)
-                else:
-                    resolved_body = self._resolve_value(body or "{}")
-                    resp = await client.request(method, resolved_url, headers=headers_dict, content=resolved_body)
-                return resp.text
-        except Exception as e:
-            self._log("error", f"  API call failed: {e}")
-            return ""
-
     async def _type_text(self, text: str, speed_ms: int, keyboard_mapping_id: int | None = None):
         """
         Type text on the device.
-        
-        If keyboard_mapping_id is set: tap each character using the mapped coordinates
-        (e.g., for on-screen keyboard). Keys not found in the mapping are skipped with a warning.
-        
-        If keyboard_mapping_id is None: fallback to ADB `input text` (legacy behavior).
+        If keyboard_mapping_id is set: tap each character using mapped coordinates.
+        Otherwise: ADB input text (legacy).
         """
         resolved = self._resolve_value(text)
-        delay_per_char = speed_ms / 1000.0  # seconds
+        delay_per_char = speed_ms / 1000.0
 
-        # ---- Keyboard mapping tap mode ----
+        # Keyboard mapping tap mode
         if keyboard_mapping_id is not None:
-            # Load mapping keys
-            keys_map = await self._load_keyboard_mapping(keyboard_mapping_id)
+            keys_map = await load_keyboard_mapping(keyboard_mapping_id, log_fn=self._log)
             if not keys_map:
                 self._log("warn", f"  ⌨️  Keyboard mapping #{keyboard_mapping_id} is empty, no keys defined")
                 return
@@ -1263,7 +272,6 @@ class ScriptExecutor:
                     return
                 coord = keys_map.get(ch)
                 if not coord:
-                    # Try uppercase variant (user may have mapped uppercase only)
                     upp = ch.upper()
                     coord = keys_map.get(upp)
                     if coord:
@@ -1279,7 +287,7 @@ class ScriptExecutor:
                 self._log("warn", f"  ⌨️   {skipped} character(s) skipped (not mapped)")
             return
 
-        # ---- Legacy ADB input text mode ----
+        # Legacy ADB input text mode
         if self.mock_mode:
             self._log("info", f"  [mock] type text ({len(resolved)} chars, {speed_ms}ms/char)")
             for ch in resolved:
@@ -1290,157 +298,138 @@ class ScriptExecutor:
             await asyncio.sleep(len(resolved) * delay_per_char * 0.05)
         else:
             self._log("info", f"  ⌨️  type text: {len(resolved)} chars @ {speed_ms}ms/char")
-            # Send characters one by one with delay between each,
-            # so that text_speed_ms actually controls the typing speed.
             for ch in resolved:
                 if self._stop_requested:
                     return
                 if ch == "\n":
-                    await _run_adb_input(self._serial, "keyevent", "KEYCODE_ENTER")
+                    await run_adb_input(self._serial, "keyevent", "KEYCODE_ENTER")
                 elif ch == " ":
-                    await _run_adb_input(self._serial, "keyevent", "KEYCODE_SPACE")
+                    await run_adb_input(self._serial, "keyevent", "KEYCODE_SPACE")
                 elif ch in ('"', "'", "\\", "`", "$", "&", "|", ";", "(", ")", "{", "}", "<", ">", "~", "#", "!", "*"):
-                    # Shell-special characters: escape with backslash for Android shell
-                    await _run_adb_input(self._serial, "text", f"\\{ch}")
+                    await run_adb_input(self._serial, "text", f"\\{ch}")
                 elif ch.isascii() and ch.isprintable():
-                    await _run_adb_input(self._serial, "text", ch)
+                    await run_adb_input(self._serial, "text", ch)
                 else:
                     self._log("warn", f"  ⌨️  skipping non-ASCII char: {repr(ch)}")
                 if delay_per_char > 0:
                     await asyncio.sleep(delay_per_char)
 
-    async def _load_keyboard_mapping(self, mapping_id: int) -> dict:
-        """Load keyboard mapping keys from DB (with thread-safe cache). Returns {char: {x, y}} dict."""
-        global _keyboard_mapping_cache, _keyboard_mapping_cache_lock
+    # ── Screenshot / template matching ───────────────────────────────
 
-        with _keyboard_mapping_cache_lock:
-            if mapping_id in _keyboard_mapping_cache:
-                return _keyboard_mapping_cache[mapping_id]
-
-        # Load from DB
-        try:
-            import aiosqlite
-            from config import DATABASE_PATH
-            async with aiosqlite.connect(DATABASE_PATH) as db:
-                db.row_factory = aiosqlite.Row
-                cursor = await db.execute(
-                    "SELECT keys_json FROM keyboard_mappings WHERE id=?", (mapping_id,)
+    async def _screenshot_match(self, template_path: str, threshold: float,
+                                  retry_count: int, retry_delay_ms: int,
+                                  region: tuple = None) -> tuple:
+        """Try to find template on screen. Returns (success, x, y)."""
+        for attempt in range(retry_count):
+            if self._stop_requested:
+                return (False, 0, 0)
+            if self.mock_mode:
+                self._log("info", f"  [mock] match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
+                if template_match_available():
+                    found, mx, my = await match_template_on_screen(
+                        self._serial, template_path, threshold,
+                        mock_mode=self.mock_mode, region=region, log_fn=self._log,
+                    )
+                    if found:
+                        self.last_match_result = (mx, my)
+                        return (True, mx, my)
+                else:
+                    self.last_match_result = (540.0, 1200.0)
+                    self._log("info", f"  [mock] → FOUND (simulated)")
+                    return (True, 540.0, 1200.0)
+            else:
+                self._log("info", f"  🔍 match attempt {attempt+1}/{retry_count}: template='{template_path}' th={threshold}")
+                found, mx, my = await match_template_on_screen(
+                    self._serial, template_path, threshold,
+                    mock_mode=False, region=region, log_fn=self._log,
                 )
-                row = await cursor.fetchone()
-                if row and row["keys_json"]:
-                    keys = json.loads(row["keys_json"])
-                    with _keyboard_mapping_cache_lock:
-                        _keyboard_mapping_cache[mapping_id] = keys
-                    return keys
-        except Exception as e:
-            self._log("error", f"  Failed to load keyboard mapping #{mapping_id}: {e}")
+                if found:
+                    self.last_match_result = (mx, my)
+                    self._log("info", f"  ✅ match found at ({mx:.0f}, {my:.0f})")
+                    return (True, mx, my)
 
-        with _keyboard_mapping_cache_lock:
-            _keyboard_mapping_cache[mapping_id] = {}
-        return {}
+            if attempt < retry_count - 1:
+                self._log("info", f"  ⏳ retry in {retry_delay_ms}ms...")
+                await asyncio.sleep(retry_delay_ms / 1000)
+        return (False, 0, 0)
 
-    # ---- New action types: jump, stop/kill, if, orientation, launch_app, kill_app ----
+    async def _resolve_coords_from_template(self, action: dict) -> tuple:
+        """Resolve X/Y coordinates by matching template on screen, or return raw coords."""
+        tpl = action.get("template_path", "")
+        if not tpl:
+            if action.get("action_type") == "swipe":
+                return (action.get("x", 0), action.get("y", 0),
+                        action.get("x2", 0), action.get("y2", 0))
+            return (action.get("x", 0), action.get("y", 0))
 
-    async def _jump_to_action(self, jump_to: str, actions: list) -> int | None:
-        """Resolve jump_to (action name) to its index in actions list. Returns None if not found."""
-        if not jump_to:
-            return None
-        for i, a in enumerate(actions):
-            if a.get("name") == jump_to:
-                self._log("info", f"  🔀 Jumping to [{jump_to}] (action #{i + 1})")
-                return i
-        self._log("error", f"  Jump target [{jump_to}] not found")
-        return None
+        threshold = action.get("match_threshold", 0.80)
+        retry = action.get("retry_count", 1)
+        retry_delay = action.get("retry_delay_ms", 1000)
 
-    async def _if_condition(self, action: dict) -> tuple:
-        """
-        Evaluate an IF condition.
-        Returns (jump_to: str or None,  whether the condition was true or false)
-        Jump target is resolved outside.
-        """
-        var_name = action.get("condition_var", "")
-        op = action.get("condition_op", "eq")
-        compare_val = self._resolve_value(action.get("condition_value", ""))
-
-        actual_val = self.variables.get(var_name, "")
-        actual_val = self._resolve_value(actual_val)
-
-        self._log("info", f"  IF condition: ${var_name} ({actual_val}) {op} {compare_val}")
-
-        result = False
-        if op == "eq":
-            result = str(actual_val) == str(compare_val)
-        elif op == "ne":
-            result = str(actual_val) != str(compare_val)
-        elif op == "gt":
-            try:
-                result = float(actual_val) > float(compare_val)
-            except (ValueError, TypeError):
-                result = False
-        elif op == "lt":
-            try:
-                result = float(actual_val) < float(compare_val)
-            except (ValueError, TypeError):
-                result = False
-        elif op == "ge":
-            try:
-                result = float(actual_val) >= float(compare_val)
-            except (ValueError, TypeError):
-                result = False
-        elif op == "le":
-            try:
-                result = float(actual_val) <= float(compare_val)
-            except (ValueError, TypeError):
-                result = False
-        elif op == "contains":
-            result = compare_val in str(actual_val)
-        elif op == "not_contains":
-            result = compare_val not in str(actual_val)
-        elif op == "empty":
-            result = actual_val == "" or actual_val is None
-        elif op == "not_empty":
-            result = actual_val != "" and actual_val is not None
+        if action.get("action_type") == "swipe":
+            found, x1, y1 = await self._screenshot_match(tpl, threshold, retry, retry_delay)
+            if not found:
+                raise RuntimeError(f"Template '{tpl}' not found on screen for swipe start point")
+            tpl2 = action.get("template_path2", "")
+            if tpl2:
+                found2, x2, y2 = await self._screenshot_match(tpl2, threshold, retry, retry_delay)
+                if not found2:
+                    raise RuntimeError(f"Template '{tpl2}' not found on screen for swipe end point")
+            else:
+                x2 = action.get("x2", 0) or x1
+                y2 = action.get("y2", 0) or y1
+            return (x1, y1, x2, y2)
         else:
-            self._log("warn", f"  unknown condition operator: {op}, treating as false")
+            found, x, y = await self._screenshot_match(tpl, threshold, retry, retry_delay)
+            if not found:
+                raise RuntimeError(f"Template '{tpl}' not found on screen for {action.get('action_type')}")
+            return (x, y)
 
-        self._log("info", f"  IF result: {result}")
-        return (action.get("jump_on_true", "") if result else action.get("jump_on_false", ""), result)
+    # ── API, orientation, apps, SMS, toast ───────────────────────────
+
+    async def _fetch_api(self, url: str, method: str, headers: str, body: str) -> str:
+        import httpx
+        resolved_url = self._resolve_value(url)
+        try:
+            headers_dict = json.loads(headers) if headers else {}
+        except json.JSONDecodeError:
+            headers_dict = {}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                if method in ("GET", "DELETE"):
+                    resp = await client.request(method, resolved_url, headers=headers_dict)
+                else:
+                    resolved_body = self._resolve_value(body or "{}")
+                    resp = await client.request(method, resolved_url, headers=headers_dict, content=resolved_body)
+                return resp.text
+        except Exception as e:
+            self._log("error", f"  API call failed: {e}")
+            return ""
 
     async def _orientation(self, orientation: str):
-        """Set device orientation via ADB."""
-        # Map orientation values to Android settings
-        orient_map = {
-            "auto": "0",      # auto-rotate on
-            "portrait": "0",  # settings put system user_rotation 0
-            "landscape": "1",
-            "reverse_portrait": "2",
-            "reverse_landscape": "3",
-        }
-        # For "auto" we enable accelerometer rotation
         if orientation == "auto":
             if self.mock_mode:
-                self._log("info", f"  [mock] orientation → auto (accelerometer)")
+                self._log("info", "  [mock] orientation → auto (accelerometer)")
             else:
-                self._log("info", f"  📱 orientation → auto")
+                self._log("info", "  📱 orientation → auto")
                 adb_prefix = ("-s", self._serial) if self._serial else ()
-                await _run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "accelerometer_rotation", "1")),
+                await run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "accelerometer_rotation", "1")),
                               timeout=5.0)
                 return
 
+        orient_map = {"portrait": "0", "landscape": "1", "reverse_portrait": "2", "reverse_landscape": "3"}
         rot_val = orient_map.get(orientation, "0")
         if self.mock_mode:
             self._log("info", f"  [mock] orientation → {orientation} (rotation {rot_val})")
         else:
             self._log("info", f"  📱 orientation → {orientation}")
             adb_prefix = ("-s", self._serial) if self._serial else ()
-            # First disable accelerometer rotation, then set user rotation
-            await _run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "accelerometer_rotation", "0")),
+            await run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "accelerometer_rotation", "0")),
                           timeout=5.0)
-            await _run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "user_rotation", rot_val)),
+            await run_adb(*(adb_prefix + ("shell", "settings", "put", "system", "user_rotation", rot_val)),
                           timeout=5.0)
 
     async def _launch_app(self, package: str):
-        """Launch an Android app by package name via ADB."""
         resolved = self._resolve_value(package)
         if self.mock_mode:
             self._log("info", f"  [mock] launch_app: {resolved}")
@@ -1448,16 +437,25 @@ class ScriptExecutor:
         else:
             self._log("info", f"  🚀 launch_app: {resolved}")
             adb_prefix = ("-s", self._serial) if self._serial else ()
-            # Use monkey to launch the app
-            await _run_adb(*(adb_prefix + ("shell", "monkey", "-p", resolved, "-c", "android.intent.category.LAUNCHER", "1")),
+            await run_adb(*(adb_prefix + ("shell", "monkey", "-p", resolved, "-c", "android.intent.category.LAUNCHER", "1")),
                           timeout=10.0)
-            await asyncio.sleep(1.0)  # wait for app to start
+            await asyncio.sleep(1.0)
+
+    async def _kill_app(self, package: str):
+        resolved = self._resolve_value(package)
+        if self.mock_mode:
+            self._log("info", f"  [mock] kill_app: {resolved}")
+            await asyncio.sleep(0.2)
+        else:
+            self._log("info", f"  🔪 kill_app: {resolved}")
+            adb_prefix = ("-s", self._serial) if self._serial else ()
+            await run_adb(*(adb_prefix + ("shell", "am", "force-stop", resolved)),
+                          timeout=10.0)
+            await asyncio.sleep(0.3)
 
     async def _toast(self, message: str, duration: str = "short"):
-        """Show a toast message on the device via ADB.
-        Tries multiple methods for cross-device compatibility."""
         resolved_msg = self._resolve_value(message)
-        dur_param = "1" if duration == "long" else "0"  # 0=short, 1=long
+        dur_param = "1" if duration == "long" else "0"
         if self.mock_mode:
             self._log("info", f"  [mock] toast ({duration}): {resolved_msg}")
             await asyncio.sleep(0.1)
@@ -1467,73 +465,41 @@ class ScriptExecutor:
         escaped = resolved_msg.replace("'", "\\'")
         adb_prefix = ("-s", self._serial) if self._serial else ()
 
-        # Strategy 1: broadcast to SystemUI (works on AOSP-based ROMs, Android 8+)
-        try:
-            await _run_adb(*(adb_prefix + (
-                "shell", "am", "broadcast",
-                "-a", "com.android.systemui.action.show_toast",
-                "--es", "android.intent.extra.TEXT", escaped,
-                "--ei", "android.intent.extra.DURATION", dur_param,
-            )), timeout=4.0)
-            await asyncio.sleep(0.15)
-            return
-        except RuntimeError:
-            pass
+        for strat_args in [
+            ("shell", "am", "broadcast",
+             "-a", "com.android.systemui.action.show_toast",
+             "--es", "android.intent.extra.TEXT", escaped,
+             "--ei", "android.intent.extra.DURATION", dur_param),
+            ("shell", "am", "broadcast",
+             "-n", "com.termux.api/.ToastReceiver",
+             "--es", "text", escaped,
+             "--ez", "long", "true" if duration == "long" else "false"),
+        ]:
+            try:
+                await run_adb(*(adb_prefix + strat_args), timeout=4.0)
+                await asyncio.sleep(0.15)
+                return
+            except RuntimeError:
+                pass
 
-        # Strategy 2: Try Termux:API toast (if Termux is installed on device)
+        # Strategy 3: notification
         try:
-            await _run_adb(*(adb_prefix + (
-                "shell", "am", "broadcast",
-                "-n", "com.termux.api/.ToastReceiver",
-                "--es", "text", escaped,
-                "--ez", "long", "true" if duration == "long" else "false",
-            )), timeout=4.0)
-            await asyncio.sleep(0.15)
-            return
-        except RuntimeError:
-            pass
-
-        # Strategy 3: Post a system notification that looks like a toast (Android 8+)
-        try:
-            await _run_adb(*(adb_prefix + (
+            await run_adb(*(adb_prefix + (
                 "shell", "cmd", "notification", "post",
-                "-S", "bigtext",
-                "-t", "Auto-NguLo",
-                "toast", resolved_msg,
+                "-S", "bigtext", "-t", "Auto-NguLo", "toast", resolved_msg,
             )), timeout=4.0)
-            # Remove it after a short time so it doesn't clutter
             await asyncio.sleep(1.5 if duration == "short" else 3.5)
             try:
-                await _run_adb(*(adb_prefix + (
-                    "shell", "cmd", "notification", "cancel", "toast",
-                )), timeout=3.0)
+                await run_adb(*(adb_prefix + ("shell", "cmd", "notification", "cancel", "toast")), timeout=3.0)
             except RuntimeError:
                 pass
             return
         except RuntimeError:
             pass
 
-        # Strategy 4: Log only (no working toast method found)
         self._log("warn", f"  ⚠️  Toast not supported on this device (logged only): {resolved_msg}")
 
-    async def _kill_app(self, package: str):
-        """Kill/force-stop an Android app by package name via ADB."""
-        resolved = self._resolve_value(package)
-        if self.mock_mode:
-            self._log("info", f"  [mock] kill_app: {resolved}")
-            await asyncio.sleep(0.2)
-        else:
-            self._log("info", f"  🔪 kill_app: {resolved}")
-            adb_prefix = ("-s", self._serial) if self._serial else ()
-            await _run_adb(*(adb_prefix + ("shell", "am", "force-stop", resolved)),
-                          timeout=10.0)
-            await asyncio.sleep(0.3)
-
     async def _read_latest_sms(self, save_var: str = "last_sms", sms_type: str = "inbox", sms_limit: int = 1):
-        """Read latest SMS from device via ADB content provider.
-        Saves result as JSON string to self.variables[save_var].
-        JSON structure: {"count": N, "messages": [{"address": ..., "body": ..., "date": ...}, ...]}
-        """
         if self.mock_mode:
             dummy = json.dumps({
                 "count": 1,
@@ -1548,18 +514,12 @@ class ScriptExecutor:
             return
 
         self._log("info", f"  📩 Reading latest SMS ({sms_type}, limit={sms_limit})...")
-
-        # Map sms_type → content URI
-        uri_map = {
-            "inbox": "content://sms/inbox",
-            "sent": "content://sms/sent",
-            "draft": "content://sms/draft",
-            "all": "content://sms",
-        }
+        uri_map = {"inbox": "content://sms/inbox", "sent": "content://sms/sent",
+                    "draft": "content://sms/draft", "all": "content://sms"}
         uri = uri_map.get(sms_type, "content://sms/inbox")
 
         try:
-            raw = await _run_adb(
+            raw = await run_adb(
                 *self._adb_args(
                     "shell", "content", "query",
                     "--uri", uri,
@@ -1569,9 +529,6 @@ class ScriptExecutor:
                 ),
                 timeout=10.0,
             )
-
-            # Parse content query output:
-            # Row: 0 address=08123..., body=Halo..., date=1234567890
             messages = []
             if raw:
                 for row_line in raw.split("\n"):
@@ -1579,40 +536,27 @@ class ScriptExecutor:
                     if not row_line or not row_line.startswith("Row:"):
                         continue
                     msg = {}
-                    # Remove "Row: N " prefix then split on ", "
                     body_part = row_line.split(" ", 2)[-1] if len(row_line.split(" ", 2)) > 2 else row_line
                     for part in body_part.split(", "):
                         part = part.strip()
                         if "=" in part:
                             key, val = part.split("=", 1)
-                            key = key.strip()
-                            msg[key] = val
+                            msg[key.strip()] = val
                     if msg:
                         messages.append(msg)
 
-            result = json.dumps({
-                "count": len(messages),
-                "messages": messages,
-            }, ensure_ascii=False)
-
+            result = json.dumps({"count": len(messages), "messages": messages}, ensure_ascii=False)
             self.variables[save_var] = result
             preview = messages[0].get("body", "")[:60] if messages else "(kosong)"
             self._log("success", f"  📩 SMS saved to ${save_var}: {len(messages)} message(s) — {preview}")
-
         except RuntimeError as e:
             self._log("error", f"  ❌ Failed to read SMS: {e}")
-            # Save empty result so downstream actions don't crash on missing variable
             self.variables[save_var] = json.dumps({"count": 0, "messages": [], "error": str(e)})
             raise
 
-    # ---- call_script / goto_script ----
+    # ── call_script / goto_script ────────────────────────────────────
 
     async def _call_script(self, target_script_name: str) -> bool:
-        """
-        Load and execute another script inline by name. Waits for it to complete.
-        Returns True if the target script succeeded, False if it failed/stopped.
-        Variables are shared with the parent script.
-        """
         if not self.script_loader:
             self._log("error", "  ❌ script_loader not set — cannot call another script")
             return False
@@ -1631,7 +575,6 @@ class ScriptExecutor:
         actions = target_script["actions"]
         self._log("info", f"  📞 Calling script [{target_name}] with {len(actions)} action(s)...")
 
-        # Save current state
         saved_stop = self._stop_requested
         self._stop_requested = False
 
@@ -1639,14 +582,13 @@ class ScriptExecutor:
         while idx < len(actions):
             if self._stop_requested:
                 self._log("info", f"  ⏹️ Called script [{target_name}] stopped")
-                self._stop_requested = saved_stop  # restore parent stop state
+                self._stop_requested = saved_stop
                 return False
 
             action = actions[idx]
             action_name = action.get("name", f"action_{idx}")
             action_type = action.get("action_type", "wait")
 
-            # Skip disabled actions
             if action.get("enabled", 1) == 0 or action.get("enabled") is False:
                 self._log("info", f"  ⏭️ [{target_name}] [#{idx + 1}] {action_type} [{action_name}] SKIPPED (disabled)")
                 idx += 1
@@ -1654,22 +596,15 @@ class ScriptExecutor:
 
             self._log("info", f"  📞 [{target_name}] ⚡ [#{idx + 1}] {action_type} [{action_name}]")
 
-            # Wait before
             wait_before = action.get("wait_before_ms", 500) / 1000
             if wait_before > 0:
                 await asyncio.sleep(wait_before)
 
-            jump_to = None
-            ok = True
-            err_msg = ""
-
             try:
                 ok, jump_to, err_msg = await self._execute_single_action(action, actions)
             except Exception as e:
-                ok = False
-                err_msg = str(e)
+                ok, jump_to, err_msg = False, None, str(e)
 
-            # Wait after
             wait_after = action.get("wait_after_ms", 500) / 1000
             if wait_after > 0:
                 await asyncio.sleep(wait_after)
@@ -1682,7 +617,6 @@ class ScriptExecutor:
                     self._stop_requested = saved_stop
                     return False
 
-            # Handle jumps
             if jump_to:
                 target_idx = await self._resolve_jump(jump_to, actions)
                 if target_idx is not None:
@@ -1698,11 +632,53 @@ class ScriptExecutor:
         self._stop_requested = saved_stop
         return True
 
+    async def _if_condition(self, action: dict) -> tuple:
+        var_name = action.get("condition_var", "")
+        op = action.get("condition_op", "eq")
+        compare_val = self._resolve_value(action.get("condition_value", ""))
+
+        actual_val = self.variables.get(var_name, "")
+        actual_val = self._resolve_value(actual_val)
+
+        self._log("info", f"  IF condition: ${var_name} ({actual_val}) {op} {compare_val}")
+
+        if op == "eq":
+            result = str(actual_val) == str(compare_val)
+        elif op == "ne":
+            result = str(actual_val) != str(compare_val)
+        elif op in ("gt", "lt", "ge", "le"):
+            try:
+                a, b = float(actual_val), float(compare_val)
+                result = (op == "gt" and a > b) or (op == "lt" and a < b) or (op == "ge" and a >= b) or (op == "le" and a <= b)
+            except (ValueError, TypeError):
+                result = False
+        elif op == "contains":
+            result = compare_val in str(actual_val)
+        elif op == "not_contains":
+            result = compare_val not in str(actual_val)
+        elif op == "empty":
+            result = actual_val == "" or actual_val is None
+        elif op == "not_empty":
+            result = actual_val != "" and actual_val is not None
+        else:
+            self._log("warn", f"  unknown condition operator: {op}, treating as false")
+            result = False
+
+        self._log("info", f"  IF result: {result}")
+        return (action.get("jump_on_true", "") if result else action.get("jump_on_false", ""), result)
+
+    async def _resolve_jump(self, jump_to: str, actions: list) -> int | None:
+        if not jump_to:
+            return None
+        for i, a in enumerate(actions):
+            if a.get("name") == jump_to:
+                return i
+        return None
+
+    # ── Single action dispatcher ─────────────────────────────────────
+
     async def _execute_single_action(self, action: dict, actions: list) -> tuple:
-        """
-        Execute a single action. Used by both main loop and _call_script.
-        Returns (ok: bool, jump_to: str | None, err_msg: str).
-        """
+        """Returns (ok: bool, jump_to: str | None, err_msg: str)."""
         action_type = action.get("action_type", "wait")
         jump_to = None
         ok = True
@@ -1723,7 +699,9 @@ class ScriptExecutor:
                     coords = await self._resolve_coords_from_template(action)
                     await self._swipe(coords[0], coords[1], coords[2], coords[3], action.get("duration_ms", 300))
                 else:
-                    await self._swipe(action.get("x", 0), action.get("y", 0), action.get("x2", 0), action.get("y2", 0), action.get("duration_ms", 300))
+                    await self._swipe(action.get("x", 0), action.get("y", 0),
+                                      action.get("x2", 0), action.get("y2", 0),
+                                      action.get("duration_ms", 300))
 
             elif action_type == "long_press":
                 if action.get("template_path") and action.get("x") is None and action.get("y") is None:
@@ -1734,10 +712,8 @@ class ScriptExecutor:
 
             elif action_type == "screenshot_match":
                 match_region = None
-                rx = action.get("match_region_x")
-                ry = action.get("match_region_y")
-                rw = action.get("match_region_w")
-                rh = action.get("match_region_h")
+                rx, ry = action.get("match_region_x"), action.get("match_region_y")
+                rw, rh = action.get("match_region_w"), action.get("match_region_h")
                 if rx is not None and ry is not None and rw is not None and rh is not None:
                     match_region = (rx, ry, rw, rh)
                 found, mx, my = await self._screenshot_match(
@@ -1755,8 +731,7 @@ class ScriptExecutor:
                     jump_to = action.get("jump_on_fail", "")
 
             elif action_type == "wait":
-                wait_ms = action.get("wait_ms", 1000)
-                await asyncio.sleep(wait_ms / 1000)
+                await asyncio.sleep(action.get("wait_ms", 1000) / 1000)
 
             elif action_type == "push_key":
                 await self._push_key(action.get("key_code", "HOME"))
@@ -1801,7 +776,7 @@ class ScriptExecutor:
             elif action_type == "jump":
                 jump_to = action.get("jump_to", "")
                 if not jump_to:
-                    self._log("warn", f"  jump action without target, skipping")
+                    self._log("warn", "  jump action without target, skipping")
 
             elif action_type == "stop":
                 self._stop_requested = True
@@ -1842,7 +817,7 @@ class ScriptExecutor:
                 target_name = action.get("goto_script_name", "").strip()
                 if target_name:
                     self._log("info", f"  🔀 goto_script: transferring to script [{target_name}]")
-                    self._goto_target = target_name  # signal to main loop (now a name string)
+                    self._goto_target = target_name
                     self._stop_requested = True
                 else:
                     ok = False
@@ -1863,16 +838,7 @@ class ScriptExecutor:
 
         return ok, jump_to, err_msg
 
-    async def _resolve_jump(self, jump_to: str, actions: list) -> int | None:
-        """Resolve a jump target name to action index. Shared helper for all action types."""
-        if not jump_to:
-            return None
-        for i, a in enumerate(actions):
-            if a.get("name") == jump_to:
-                return i
-        return None
-
-    # ---- Main executor ----
+    # ── Main executor ────────────────────────────────────────────────
 
     async def execute(self, script: dict, log_cb: Callable | None = None,
                        inherit_variables: dict | None = None) -> dict:
@@ -1881,22 +847,15 @@ class ScriptExecutor:
         Supports goto_script: if _goto_target is set, returns a special
         result dict with _goto_target so the router can restart execution
         on the target script.
-
-        Args:
-            inherit_variables: If provided, start with these variables instead of
-                               empty dict. Used by goto_script chaining to share
-                               variables across scripts. Pass None for a fresh run.
         """
         self.log_callback = log_cb
         self._stop_requested = False
         self._goto_target = None
-        # Load global shared variables from file, then overlay inherit_variables on top
-        self.variables = _load_global_vars()
+        self.variables = load_global_vars()
         if inherit_variables is not None:
             self.variables.update(inherit_variables)
         self.last_match_result = None
 
-        # Initialize serial for real mode
         if not self.mock_mode:
             await self._init_serial()
 
@@ -1930,7 +889,6 @@ class ScriptExecutor:
                 action_name = action.get("name", f"action_{idx}")
                 action_type = action.get("action_type", "wait")
 
-                # Skip disabled actions
                 if action.get("enabled", 1) == 0 or action.get("enabled") is False:
                     self._log("info", f"⏭️ [#{idx + 1}] {action_type} [{action_name}] SKIPPED (disabled)")
                     idx += 1
@@ -1939,27 +897,19 @@ class ScriptExecutor:
                 self._current_action_idx = idx
                 self._log("info", f"⚡ [#{idx + 1}] {action_type} [{action_name}] executing...")
 
-                # Wait before
                 wait_before = action.get("wait_before_ms", 500) / 1000
                 if wait_before > 0:
                     await asyncio.sleep(wait_before)
 
                 ok, jump_to, err_msg = await self._execute_single_action(action, actions)
 
-                # goto_script sets _stop_requested=True and sets _goto_target
                 if self._goto_target is not None:
                     self._log("success", f"✅ [#{idx + 1}] {action_type} [{action_name}]: SUCCESS")
                     success_count += 1
                     self._log("info", f"  🔀 goto_script → [{self._goto_target}]")
-                    # We need to break out completely and return the goto target
                     break
 
-                # Handle stop (from stop action or goto_script)
-                if action_type == "stop" or action_type == "goto_script":
-                    # handle stop specially (already set _stop_requested in _execute_single_action)
-                    pass
-
-                # Handle jump action (which sets jump_to but needs resolution)
+                # Handle jump action
                 if action_type == "jump" and jump_to:
                     target_idx = await self._resolve_jump(jump_to, actions)
                     if target_idx is not None:
@@ -1970,7 +920,7 @@ class ScriptExecutor:
                         ok = False
                         err_msg = f"Jump target [{jump_to}] not found"
 
-                # Handle if action (which sets jump_to)
+                # Handle if action
                 if action_type == "if" and jump_to:
                     target_idx = await self._resolve_jump(jump_to, actions)
                     if target_idx is not None:
@@ -1981,7 +931,6 @@ class ScriptExecutor:
                         ok = False
                         err_msg = f"IF jump target [{jump_to}] not found"
 
-                # Wait after
                 wait_after = action.get("wait_after_ms", 500) / 1000
                 if wait_after > 0:
                     await asyncio.sleep(wait_after)
@@ -1993,7 +942,7 @@ class ScriptExecutor:
                     fail_count += 1
                     self._log("error", f"❌ [#{idx + 1}] {action_type} [{action_name}]: FAILED — {err_msg}")
 
-                # ---- Jump logic (from screenshot_match, etc.) ----
+                # Jump logic (from screenshot_match, etc.)
                 if jump_to and action_type not in ("jump", "if"):
                     target_idx = await self._resolve_jump(jump_to, actions)
                     if target_idx is not None:
@@ -2005,7 +954,6 @@ class ScriptExecutor:
                         self._stop_requested = True
                         break
 
-                # Stop if action failed and no jump_on_fail was set to handle it
                 if not ok:
                     self._log("error", "⏹️ Stopping execution due to failure (no jump_on_fail set)")
                     self._stop_requested = True
@@ -2016,7 +964,6 @@ class ScriptExecutor:
                 if idx < len(actions) and delay_between > 0:
                     await asyncio.sleep(delay_between)
 
-            # If goto_script was triggered, break the repeat loop
             if self._goto_target is not None:
                 break
 
@@ -2038,12 +985,10 @@ class ScriptExecutor:
             "duration_sec": round(elapsed, 1),
         }
 
-        # Pass the goto target back to the router if set
         if self._goto_target is not None:
             result["_goto_target"] = self._goto_target
 
-        # Persist variables to global shared file so next script can continue
-        _save_global_vars(self.variables)
-        self._log("info", f"💾 Variables saved ({len(self.variables)} var) → {_GLOBAL_VARS_FILE}")
+        save_global_vars(self.variables)
+        self._log("info", f"💾 Variables saved ({len(self.variables)} var)")
 
         return result

@@ -7,7 +7,9 @@ import queue
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from database.connection import get_db
-from engine.executor import ScriptExecutor, adb_available, _load_global_vars, _save_global_vars
+from engine.executor import ScriptExecutor
+from engine.adb import adb_available
+from engine.variables import load_global_vars, save_global_vars
 
 router = APIRouter(prefix="/api/scripts/{script_id}", tags=["execution"])
 
@@ -246,7 +248,7 @@ _vars_router = APIRouter(prefix="/api/variables", tags=["variables"])
 @_vars_router.get("")
 async def get_all_variables():
     """Get all global shared variables."""
-    return _load_global_vars()
+    return load_global_vars()
 
 
 @_vars_router.put("/{key}")
@@ -254,27 +256,27 @@ async def set_variable(key: str, request: Request):
     """Set or update a variable by key. Body: {"value": "..."}"""
     body = await request.json()
     value = body.get("value", "")
-    vars_ = _load_global_vars()
+    vars_ = load_global_vars()
     vars_[key] = value
-    _save_global_vars(vars_)
+    save_global_vars(vars_)
     return {"key": key, "value": value}
 
 
 @_vars_router.delete("/{key}")
 async def delete_variable(key: str):
     """Delete a variable by key."""
-    vars_ = _load_global_vars()
+    vars_ = load_global_vars()
     if key not in vars_:
         raise HTTPException(status_code=404, detail=f"Variable '{key}' not found")
     del vars_[key]
-    _save_global_vars(vars_)
+    save_global_vars(vars_)
     return {"message": f"Variable '{key}' deleted"}
 
 
 @_vars_router.delete("")
 async def clear_all_variables():
     """Delete ALL global variables."""
-    _save_global_vars({})
+    save_global_vars({})
     return {"message": "All variables cleared"}
 
 
