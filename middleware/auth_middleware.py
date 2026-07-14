@@ -5,7 +5,9 @@ No username needed — just a single password for the entire app.
 import jwt
 from datetime import datetime, timedelta, timezone
 from fastapi import Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
+from starlette.types import ASGIApp, Scope, Receive, Send
+from starlette.requests import Request as StarletteRequest
 from config import SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRE_MINUTES
 
 
@@ -45,30 +47,45 @@ def get_token_from_request(request: Request) -> str | None:
     return None
 
 
-async def auth_middleware(request: Request, call_next):
-    """Middleware that protects routes except login, logout and static files."""
-    # Public paths — no auth required
-    public_paths = (
-        "/api/auth/login",
-        "/static",
-        "/favicon.ico",
-        "/",
-        "/login",
-    )
-    if any(request.url.path == p or request.url.path.startswith(p + "/") or
-           request.url.path == p.rstrip("/") for p in public_paths):
-        return await call_next(request)
+class AuthMiddleware:
+    """Pure ASGI middleware that protects routes except login, logout and static files."""
 
-    token = get_token_from_request(request)
-    if not token or not verify_token(token):
-        # API routes → 401 JSON
-        if request.url.path.startswith("/api/"):
-            from fastapi.responses import JSONResponse
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Authentication required"},
-            )
-        # Page routes → redirect to login
-        return RedirectResponse(url="/", status_code=302)
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
-    return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = StarletteRequest(scope, receive)
+        path = request.url.path
+
+        # Public paths — no auth required
+        public_paths = (
+            "/api/auth/login",
+            "/static",
+            "/favicon.ico",
+            "/",
+            "/login",
+        )
+        if any(path == p or path.startswith(p + "/") or path == p.rstrip("/") for p in public_paths):
+            await self.app(scope, receive, send)
+            return
+
+        token = get_token_from_request(request)
+        if not token or not verify_token(token):
+            # API routes → 401 JSON
+            if path.startswith("/api/"):
+                response = JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required"},
+                )
+                await response(scope, receive, send)
+                return
+            # Page routes → redirect to login
+            response = RedirectResponse(url="/", status_code=302)
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)

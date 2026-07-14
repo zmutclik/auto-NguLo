@@ -8,13 +8,13 @@ import shutil
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import HOST, PORT, DEBUG, DATABASE_PATH, TEMPLATE_DIR
 from database.connection import init_db, close_db, get_db
-from middleware.auth_middleware import auth_middleware, get_token_from_request, verify_token
+from middleware.auth_middleware import AuthMiddleware, get_token_from_request, verify_token
 from routers import auth, scripts, actions, executor, device, keyboard
 from routers.executor import vars_router
 
@@ -41,7 +41,7 @@ app = FastAPI(
 )
 
 # ---- Middleware ----
-app.middleware("http")(auth_middleware)
+app.add_middleware(AuthMiddleware)
 
 # ---- Static Files ----
 os.makedirs("data/templates", exist_ok=True)
@@ -76,9 +76,9 @@ app.include_router(vars_router)
 @app.get("/favicon.ico")
 async def favicon():
     """Favicon — return empty response to prevent 404 noise."""
-    return JSONResponse(content="", status_code=204)
+    return Response(status_code=204)
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 async def login_page(request: Request):
     """Login page."""
     token = get_token_from_request(request)

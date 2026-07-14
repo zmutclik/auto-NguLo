@@ -66,7 +66,8 @@
                 </div>
             </div>
             <div class="border-t border-surface-border px-5 py-3 flex gap-2 bg-slate-900/30">
-                <a :href="'/execute/' + entry.script_id" class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-xs font-semibold rounded-lg px-3 py-2 transition-colors shadow-sm shadow-success/20">🔄 Rerun</a>
+                <button x-show="entry.status === 'running'" @click="stopEntry(entry.id, entry.script_id)" class="inline-flex items-center gap-1.5 bg-danger hover:bg-red-600 text-white text-xs font-semibold rounded-lg px-3 py-2 transition-colors shadow-sm shadow-danger/20">⏹️ Stop</button>
+                <a x-show="entry.status !== 'running'" :href="'/execute/' + entry.script_id" class="inline-flex items-center gap-1.5 bg-success hover:bg-green-600 text-white text-xs font-semibold rounded-lg px-3 py-2 transition-colors shadow-sm shadow-success/20">🔄 Rerun</a>
                 <button @click="copyLog(entry)" class="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold rounded-lg px-3 py-2 transition-colors">📋 Copy Log</button>
                 <button @click="deleteEntry(entry.id)" class="inline-flex items-center gap-1.5 hover:bg-red-500/10 text-slate-400 hover:text-danger text-xs font-semibold rounded-lg px-3 py-2 transition-colors ml-auto">🗑️ Delete</button>
             </div>
@@ -141,6 +142,7 @@
             },
             async deleteEntry(id) { await fetch(`/api/history/${id}`, {method:'DELETE'}); await this.load(); },
             async clearAll() { this.confirmClearAll = false; await fetch('/api/history', {method:'DELETE'}); await this.load(); },
+            async stopEntry(id, scriptId) { await fetch(`/api/scripts/${scriptId}/execute/${id}/stop`, {method:'POST'}); await this.load(); },
             copyLog(entry) {
                 const logs = entry._parsedLogs || [];
                 navigator.clipboard.writeText(logs.map(l => `[${l.time}] ${l.message}`).join('\n'));
