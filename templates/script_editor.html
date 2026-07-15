@@ -412,12 +412,13 @@
                             <div>
                                 <label class="text-xs text-slate-500">⌨️ Keyboard Mapping <span class="text-slate-600">(tap mode)</span></label>
                                 <select
-                                    :value="a.keyboard_mapping_id ?? ''"
-                                    @change="a.keyboard_mapping_id = $event.target.value !== '' ? Number($event.target.value) : null"
-                                    class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100">
+                                    x-model="a._km_id_str"
+                                    @change="a.keyboard_mapping_id = a._km_id_str !== '' ? Number(a._km_id_str) : null"
+                                    class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100"
+                                    x-init="a._km_id_str = a.keyboard_mapping_id != null ? String(a.keyboard_mapping_id) : ''">
                                     <option value="">None — ADB input text (fast key inject)</option>
                                     <template x-for="km in keyboardMappings" :key="km.id">
-                                        <option :value="km.id" :selected="a.keyboard_mapping_id === km.id" x-text="km.name + ' (' + km.layout_type + ', ' + (Object.keys(km.keys_json||{}).length || 0) + ' keys)'"></option>
+                                        <option :value="String(km.id)" x-text="km.name + ' (' + km.layout_type + ', ' + (Object.keys(km.keys_json||{}).length || 0) + ' keys)'"></option>
                                     </template>
                                 </select>
                                 <p x-show="a.keyboard_mapping_id" class="text-xs text-slate-600 mt-1">Type text dengan men-tap setiap karakter di keyboard sesuai mapping</p>
@@ -1009,6 +1010,7 @@
                                 _custom_key: isCustomKey ? a.key_code : (a._custom_key || ''),
                                 key_code: isCustomKey ? 'CUSTOM' : (a.key_code || 'HOME'),
                                 // coordinate picker state
+                                _km_id_str: a.keyboard_mapping_id != null ? String(a.keyboard_mapping_id) : '',
                                 _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
                                 _pickPctX: null, _pickPctY: null, _swiping: false,
                                 _swipeCurPctX: null, _swipeCurPctY: null,
@@ -1037,6 +1039,7 @@
                     call_script_name:'', goto_script_name:'',
                     toast_message:'', toast_duration:'short',
                     keyboard_mapping_id: null,
+                    _km_id_str: '',
                     // coordinate picker state
                     _pickX: null, _pickY: null, _pickX2: null, _pickY2: null,
                     _pickPctX: null, _pickPctY: null, _swiping: false,
