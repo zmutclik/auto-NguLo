@@ -243,7 +243,7 @@ class ScriptExecutor:
         delay_per_char = speed_ms / 1000.0
 
         # Keyboard mapping tap mode
-        if keyboard_mapping_id is not None and keyboard_mapping_id > 0:
+        if keyboard_mapping_id is not None and keyboard_mapping_id < 100:
             keys_map = await load_keyboard_mapping(keyboard_mapping_id, log_fn=self._log)
             if not keys_map:
                 self._log("warn", f"  ⌨️  Keyboard mapping #{keyboard_mapping_id} is empty, no keys defined")
