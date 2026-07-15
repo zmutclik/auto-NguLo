@@ -637,8 +637,12 @@ class ScriptExecutor:
         op = action.get("condition_op", "eq")
         compare_val = self._resolve_value(action.get("condition_value", ""))
 
-        actual_val = self.variables.get(var_name, "")
-        actual_val = self._resolve_value(actual_val)
+        # Jika condition_var mengandung ${...}, resolve dulu
+        if "${" in var_name:
+            actual_val = self._resolve_value(var_name)
+        else:
+            actual_val = self.variables.get(var_name, "")
+            actual_val = self._resolve_value(actual_val)
 
         self._log("info", f"  IF condition: ${var_name} ({actual_val}) {op} {compare_val}")
 
