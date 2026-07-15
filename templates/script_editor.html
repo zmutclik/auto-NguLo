@@ -415,6 +415,7 @@
                                     :value="a.keyboard_mapping_id ?? ''"
                                     @change="a.keyboard_mapping_id = $event.target.value !== '' ? Number($event.target.value) : null"
                                     class="w-full bg-slate-800 border border-surface-border rounded px-2 py-1.5 text-sm text-slate-100">
+                                    <option value="100">None — ADB input text (fast key inject)</option>
                                     <template x-for="km in keyboardMappings" :key="km.id">
                                         <option :value="km.id" :selected="a.keyboard_mapping_id === km.id" x-text="km.name + ' (' + km.layout_type + ', ' + (Object.keys(km.keys_json||{}).length || 0) + ' keys)'"></option>
                                     </template>
