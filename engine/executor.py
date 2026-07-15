@@ -155,7 +155,7 @@ class ScriptExecutor:
         else:
             self._log("info", f"  👆 tap({x:.0f}, {y:.0f})")
             await run_adb_input(self._serial, "tap", str(int(x)), str(int(y)))
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
 
     async def _swipe(self, x1, y1, x2, y2, duration_ms):
         if self.mock_mode:
@@ -262,7 +262,7 @@ class ScriptExecutor:
                             self._log("info", f"  [mock]   tap upper '{upp}' (for '{ch}') → ({coord['x']:.0f}, {coord['y']:.0f})")
                         else:
                             self._log("warn", f"  [mock]   SKIP '{ch}' (not mapped)")
-                await asyncio.sleep(len(resolved) * delay_per_char * 0.05)
+                await asyncio.sleep(len(resolved) * delay_per_char * 0.1)
                 return
 
             self._log("info", f"  ⌨️  type_text via keyboard map #{keyboard_mapping_id}: {len(resolved)} chars @ {speed_ms}ms/char")
