@@ -199,6 +199,64 @@
                     </template>
                 </div>
             </div>
+
+            <!-- Mapped Keys List -->
+            <div class="bg-surface-card border border-surface-border rounded-2xl p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-xs font-medium text-slate-400">📋 Mapped Keys
+                        <span class="ml-1 bg-brand/20 text-brand text-[10px] font-bold px-1.5 py-0.5 rounded-full" x-text="mappedKeyListFiltered().length + '/' + mappedCount()"></span>
+                    </h3>
+                    <button x-show="mappedCount() > 0" @click="confirmClearAllKeys()"
+                        class="text-[10px] text-danger hover:text-red-400 transition-colors flex items-center gap-1">
+                        🗑️ Clear All
+                    </button>
+                </div>
+
+                <!-- Search -->
+                <div class="relative mb-3">
+                    <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-xs">🔍</span>
+                    <input x-model="mappedKeySearch" type="text"
+                           class="w-full bg-slate-800 border border-surface-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-brand transition-all"
+                           placeholder="Cari key...">
+                    <button x-show="mappedKeySearch" @click="mappedKeySearch = ''"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs">✕</button>
+                </div>
+
+                <!-- Empty state -->
+                <div x-show="mappedCount() === 0" class="text-center py-6 text-slate-600">
+                    <span class="text-2xl">🗺️</span>
+                    <p class="text-xs mt-1">Belum ada key yang di-mapping</p>
+                </div>
+                <div x-show="mappedCount() > 0 && mappedKeyListFiltered().length === 0" class="text-center py-4 text-slate-600">
+                    <p class="text-xs">Tidak ada hasil untuk "<span x-text="mappedKeySearch" class="font-mono text-slate-400"></span>"</p>
+                </div>
+
+                <!-- List -->
+                <div class="space-y-1 max-h-64 overflow-y-auto pr-0.5">
+                    <template x-for="item in mappedKeyListFiltered()" :key="item.char">
+                        <div class="flex items-center gap-2 group rounded-lg px-2 py-1.5 transition-colors"
+                             :class="selectedChar === item.char ? 'bg-warning/10 border border-warning/30' : 'hover:bg-slate-800/60'">
+                            <!-- Key label -->
+                            <button @click="selectKey(item.char)"
+                                    class="flex-shrink-0 min-w-[2rem] text-center border rounded-md px-1.5 py-0.5 text-[11px] font-mono transition-all"
+                                    :class="selectedChar === item.char ? 'border-warning text-warning bg-warning/10' : 'border-brand text-brand bg-brand/10 hover:bg-brand/20'"
+                                    x-text="item.char === 'ENTER' ? '↵' : item.char === 'BACKSPACE' ? '⌫' : item.char === ' ' ? '␣' : item.char">
+                            </button>
+                            <!-- Coordinates -->
+                            <span class="flex-1 text-[10px] text-slate-500 font-mono">
+                                X:<span class="text-slate-300" x-text="item.x"></span>
+                                Y:<span class="text-slate-300" x-text="item.y"></span>
+                            </span>
+                            <!-- Delete button -->
+                            <button @click="deleteKey(item.char)"
+                                    class="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-danger transition-all text-xs px-1"
+                                    title="Hapus key ini">
+                                🗑️
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -386,6 +444,8 @@
             renameModalOpen: false,
             renameTargetId: null,
             renameValue: '',
+            // Mapped key list
+            mappedKeySearch: '',
 
             async init() {
                 try {
@@ -543,6 +603,44 @@
             // ── Screenshot management ──
             mappedCount() {
                 return Object.keys(this.currentKeys).length;
+            },
+
+            mappedKeyListFiltered() {
+                const q = (this.mappedKeySearch || '').toLowerCase().trim();
+                const entries = Object.entries(this.currentKeys).map(([char, coord]) => ({
+                    char,
+                    x: Math.round(coord.x),
+                    y: Math.round(coord.y),
+                }));
+                if (!q) return entries;
+                return entries.filter(e => {
+                    const label = e.char === 'ENTER' ? 'enter' : e.char === 'BACKSPACE' ? 'backspace' : e.char === ' ' ? 'space' : e.char.toLowerCase();
+                    return label.includes(q) || String(e.x).includes(q) || String(e.y).includes(q);
+                });
+            },
+
+            async deleteKey(char) {
+                if (!this.currentMappingId) return;
+                delete this.currentKeys[char];
+                // Force Alpine reactivity
+                this.currentKeys = { ...this.currentKeys };
+                if (this.selectedChar === char) {
+                    this.selectedChar = null;
+                    this.pickX = null;
+                    this.pickY = null;
+                }
+                try {
+                    await fetch(`/api/keyboard/${this.currentMappingId}/keys/${encodeURIComponent(char)}`, { method: 'DELETE' });
+                } catch(e) { console.error('Failed to delete key:', e); }
+            },
+
+            confirmClearAllKeys() {
+                if (!confirm(`Hapus SEMUA ${this.mappedCount()} key yang sudah di-mapping?`)) return;
+                this.currentKeys = {};
+                this.selectedChar = null;
+                this.pickX = null;
+                this.pickY = null;
+                this.saveMapping();
             },
 
             selectKey(char) {
