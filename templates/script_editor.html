@@ -594,6 +594,20 @@
                             </div>
                         </div>
 
+                        <!-- Clipboard -->
+                        <div x-show="a.action_type === 'clipboard'" class="space-y-3 mb-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-500 mb-1">📋 Text to Copy</label>
+                                <textarea x-model="a.clipboard_text" rows="3" class="w-full bg-slate-800 border border-surface-border rounded-lg px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-brand resize-none" placeholder="Teks atau \${var_name}"></textarea>
+                                <p class="text-xs text-slate-600 mt-1">Gunakan <code class="text-slate-400">\${var_name}</code> untuk isi dari variable</p>
+                            </div>
+                            <div class="bg-brand/10 border border-brand/20 rounded-xl p-4">
+                                <p class="text-sm text-brand font-medium">📋 Set Android Clipboard</p>
+                                <p class="text-xs text-slate-400 mt-1">Menyalin teks ke clipboard device Android via ADB.</p>
+                                <p class="text-xs text-slate-400 mt-1">▶️ Setelah action ini, teks bisa di-paste di app manapun dengan <b>Paste (Ctrl+V)</b> atau action <b>combo → paste</b>.</p>
+                            </div>
+                        </div>
+
                         <!-- Toast -->
                         <div x-show="a.action_type === 'toast'" class="space-y-3 mb-3">
                             <div>
@@ -799,8 +813,8 @@
             keyboardMappings: [],
             // Device resolution (fetched from /api/device/info); defaults to 1080x1920
             deviceResolution: { w: 1080, h: 1920 },
-            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app','read_sms','call_script','goto_script','toast'],
-            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝','jump':'🔀','stop':'⏹️','if':'🔀','orientation':'📱','launch_app':'🚀','kill_app':'🔪','read_sms':'📩','call_script':'📞','goto_script':'🔁','toast':'💬'}[t]||'❓'; },
+            actionTypes: ['tap','swipe','long_press','screenshot_match','wait','push_key','combo','fetch_api','variable','type_text','jump','stop','if','orientation','launch_app','kill_app','read_sms','call_script','goto_script','toast','clipboard'],
+            typeIcon(t) { return {'tap':'👆','swipe':'↔️','long_press':'⏳','screenshot_match':'🖼️','wait':'⏱️','push_key':'⌨️','combo':'🔀','fetch_api':'🌐','variable':'📦','type_text':'📝','jump':'🔀','stop':'⏹️','if':'🔀','orientation':'📱','launch_app':'🚀','kill_app':'🔪','read_sms':'📩','call_script':'📞','goto_script':'🔁','toast':'💬','clipboard':'📋'}[t]||'❓'; },
 
             // ---- Match region drag on template image ----
             matchRegionRectStyle(a) {
@@ -1037,6 +1051,7 @@
                     sms_type:'inbox', sms_limit:1,
                     call_script_name:'', goto_script_name:'',
                     toast_message:'', toast_duration:'short',
+                    clipboard_text:'',
                     keyboard_mapping_id: null,
                     _km_id_str: '',
                     // coordinate picker state
@@ -1092,6 +1107,7 @@
                         sms_type: a.sms_type || 'inbox', sms_limit: a.sms_limit || 1,
                         call_script_name: a.call_script_name || '', goto_script_name: a.goto_script_name || '',
                         toast_message: a.toast_message || '', toast_duration: a.toast_duration || 'short',
+                        clipboard_text: a.clipboard_text || '',
                         use_match_result: !!a.use_match_result,
                         enabled: !!a.enabled,
                         wait_ms: a.wait_ms, wait_before_ms: a.wait_before_ms,

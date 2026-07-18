@@ -499,6 +499,48 @@ class ScriptExecutor:
 
         self._log("warn", f"  ⚠️  Toast not supported on this device (logged only): {resolved_msg}")
 
+    async def _clipboard(self, text: str):
+        resolved = self._resolve_value(text)
+        if self.mock_mode:
+            self._log("info", f"  [mock] clipboard set: {resolved[:80]}")
+            await asyncio.sleep(0.05)
+            return
+        self._log("info", f"  📋 clipboard set: {resolved[:80]}{'...' if len(resolved) > 80 else ''}")
+        adb_prefix = ("-s", self._serial) if self._serial else ()
+        # Escape single quotes for shell
+        escaped = resolved.replace("\\", "\\\\").replace("'", "'\"'\"'")
+        # Strategy 1: Termux:API clipboard
+        try:
+            await run_adb(*(adb_prefix + (
+                "shell", "am", "broadcast",
+                "-a", "clipper.set",
+                "--es", "text", escaped,
+            )), timeout=4.0)
+            return
+        except RuntimeError:
+            pass
+        # Strategy 2: input via service call (Android 10+)
+        try:
+            await run_adb(*(adb_prefix + (
+                "shell", "service", "call", "clipboard", "2",
+                "s16", escaped,
+            )), timeout=4.0)
+            return
+        except RuntimeError:
+            pass
+        # Strategy 3: Termux:API app
+        try:
+            await run_adb(*(adb_prefix + (
+                "shell", "am", "broadcast",
+                "-n", "com.termux.api/.TermuxApiReceiver",
+                "--es", "api_method", "ClipboardSet",
+                "--es", "text", escaped,
+            )), timeout=4.0)
+            return
+        except RuntimeError:
+            pass
+        self._log("warn", "  ⚠️  Clipboard set not supported on this device")
+
     async def _read_latest_sms(self, save_var: str = "last_sms", sms_type: str = "inbox", sms_limit: int = 1):
         if self.mock_mode:
             dummy = json.dumps({
@@ -832,6 +874,9 @@ class ScriptExecutor:
                     action.get("toast_message", ""),
                     action.get("toast_duration", "short"),
                 )
+
+            elif action_type == "clipboard":
+                await self._clipboard(action.get("clipboard_text", ""))
 
             else:
                 self._log("warn", f"  unknown action type: {action_type}")
