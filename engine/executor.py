@@ -14,6 +14,8 @@ import asyncio
 import json
 import re
 import time
+import urllib.request
+import urllib.error
 from typing import Callable, Optional
 
 from engine.adb import run_adb, get_device_serial
@@ -499,6 +501,65 @@ class ScriptExecutor:
 
         self._log("warn", f"  ⚠️  Toast not supported on this device (logged only): {resolved_msg}")
 
+    async def _u2_jsonrpc(self, method: str, params: list, timeout: float = 5.0):
+        """
+        Call uiautomator2 JSON-RPC server on the device.
+        Starts the server if not running, sets up port forwarding.
+        Returns the 'result' field or raises RuntimeError.
+        """
+        adb_prefix = ("-s", self._serial) if self._serial else ()
+        local_port = 9008
+
+        # Ensure port is forwarded
+        try:
+            await run_adb(*(adb_prefix + (
+                "forward", f"tcp:{local_port}", f"tcp:{local_port}",
+            )), timeout=3.0)
+        except RuntimeError:
+            pass
+
+        # Try calling the server; if it fails, start it first
+        for attempt in range(2):
+            try:
+                payload = json.dumps({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": method, "params": params,
+                }).encode()
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{local_port}/jsonrpc/0",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                loop = asyncio.get_event_loop()
+                def _do_request():
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:
+                        return json.loads(resp.read())
+                data = await loop.run_in_executor(None, _do_request)
+                if "error" in data:
+                    raise RuntimeError(f"u2 RPC error: {data['error']}")
+                return data.get("result")
+            except (urllib.error.URLError, OSError):
+                if attempt == 0:
+                    # Server not running — start it in background
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            "adb", *(adb_prefix + (
+                                "shell",
+                                "CLASSPATH=/data/local/tmp/u2.jar "
+                                "app_process / com.wetest.uia2.Main "
+                                "> /data/local/tmp/u2.log 2>&1 &",
+                            )),
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.DEVNULL,
+                        )
+                        # Don't wait for it — it runs in background
+                    except Exception:
+                        pass
+                    await asyncio.sleep(3.5)  # wait for server to start
+                else:
+                    raise RuntimeError("uiautomator2 server unavailable")
+
     async def _clipboard(self, text: str):
         resolved = self._resolve_value(text)
         if self.mock_mode:
@@ -507,35 +568,31 @@ class ScriptExecutor:
             return
         self._log("info", f"  📋 clipboard set: {resolved[:80]}{'...' if len(resolved) > 80 else ''}")
         adb_prefix = ("-s", self._serial) if self._serial else ()
-        # Escape for shell: wrap in single quotes, escape embedded single quotes
-        escaped = resolved.replace("\\", "\\\\").replace("'", "'\"'\"'")
 
-        # Strategy 1: Clipper app broadcast
-        # am broadcast returns "result=0" when a receiver handled it, "-1" when no receiver
+        # Strategy 1: uiautomator2 JSON-RPC setClipboard (most reliable on Android 10+)
+        try:
+            await self._u2_jsonrpc("setClipboard", ["label", resolved], timeout=5.0)
+            return
+        except RuntimeError as e:
+            self._log("warn", f"  ⚠️  u2 clipboard failed: {e}")
+
+        # Strategy 2: Clipper app broadcast
+        # am broadcast returns "result=0" regardless of whether a receiver handled it,
+        # but Clipper app (if installed) will handle it
+        escaped = resolved.replace("\\", "\\\\").replace("'", "'\"'\"'")
         try:
             out = await run_adb(*(adb_prefix + (
                 "shell", "am", "broadcast",
                 "-a", "clipper.set",
                 "--es", "text", escaped,
             )), timeout=4.0)
-            if "result=0" in out:
+            # Clipper sets result code to 1 when it handles the broadcast
+            if "result=1" in out:
                 return
         except RuntimeError:
             pass
 
-        # Strategy 2: service call clipboard (Android 10+)
-        # Returns "Result: Parcel(00000000 '....)" on success
-        try:
-            out = await run_adb(*(adb_prefix + (
-                "shell", "service", "call", "clipboard", "2",
-                "s16", escaped,
-            )), timeout=4.0)
-            if "Result: Parcel" in out:
-                return
-        except RuntimeError:
-            pass
-
-        # Strategy 3: Termux:API app broadcast
+        # Strategy 3: Termux:API app broadcast (requires com.termux.api installed)
         try:
             out = await run_adb(*(adb_prefix + (
                 "shell", "am", "broadcast",
@@ -543,21 +600,7 @@ class ScriptExecutor:
                 "--es", "api_method", "ClipboardSet",
                 "--es", "text", escaped,
             )), timeout=4.0)
-            if "result=0" in out:
-                return
-        except RuntimeError:
-            pass
-
-        # Strategy 4: Write to temp file then use xclip-style shell one-liner
-        try:
-            tmp = "/data/local/tmp/_adb_cb.txt"
-            cmd = (
-                f"printf '%s' '{escaped}' > {tmp} && "
-                f"am broadcast -a clipper.set --es text \"$(cat {tmp})\" 2>&1 && "
-                f"rm -f {tmp}"
-            )
-            out = await run_adb(*(adb_prefix + ("shell", cmd)), timeout=5.0)
-            if "result=0" in out:
+            if "result=1" in out:
                 return
         except RuntimeError:
             pass
