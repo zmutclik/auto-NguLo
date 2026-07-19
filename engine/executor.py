@@ -507,38 +507,61 @@ class ScriptExecutor:
             return
         self._log("info", f"  📋 clipboard set: {resolved[:80]}{'...' if len(resolved) > 80 else ''}")
         adb_prefix = ("-s", self._serial) if self._serial else ()
-        # Escape single quotes for shell
+        # Escape for shell: wrap in single quotes, escape embedded single quotes
         escaped = resolved.replace("\\", "\\\\").replace("'", "'\"'\"'")
-        # Strategy 1: Termux:API clipboard
+
+        # Strategy 1: Clipper app broadcast
+        # am broadcast returns "result=0" when a receiver handled it, "-1" when no receiver
         try:
-            await run_adb(*(adb_prefix + (
+            out = await run_adb(*(adb_prefix + (
                 "shell", "am", "broadcast",
                 "-a", "clipper.set",
                 "--es", "text", escaped,
             )), timeout=4.0)
-            return
+            if "result=0" in out:
+                return
         except RuntimeError:
             pass
-        # Strategy 2: input via service call (Android 10+)
+
+        # Strategy 2: service call clipboard (Android 10+)
+        # Returns "Result: Parcel(00000000 '....)" on success
         try:
-            await run_adb(*(adb_prefix + (
+            out = await run_adb(*(adb_prefix + (
                 "shell", "service", "call", "clipboard", "2",
                 "s16", escaped,
             )), timeout=4.0)
-            return
+            if "Result: Parcel" in out:
+                return
         except RuntimeError:
             pass
-        # Strategy 3: Termux:API app
+
+        # Strategy 3: Termux:API app broadcast
         try:
-            await run_adb(*(adb_prefix + (
+            out = await run_adb(*(adb_prefix + (
                 "shell", "am", "broadcast",
                 "-n", "com.termux.api/.TermuxApiReceiver",
                 "--es", "api_method", "ClipboardSet",
                 "--es", "text", escaped,
             )), timeout=4.0)
-            return
+            if "result=0" in out:
+                return
         except RuntimeError:
             pass
+
+        # Strategy 4: Write to temp file then use xclip-style shell one-liner
+        try:
+            tmp = "/data/local/tmp/_adb_cb.txt"
+            cmd = (
+                f"printf '%s' '{escaped}' > {tmp} && "
+                f"am broadcast -a clipper.set --es text \"$(cat {tmp})\" 2>&1 && "
+                f"rm -f {tmp}"
+            )
+            out = await run_adb(*(adb_prefix + ("shell", cmd)), timeout=5.0)
+            if "result=0" in out:
+                return
+        except RuntimeError:
+            pass
+
         self._log("warn", "  ⚠️  Clipboard set not supported on this device")
 
     async def _read_latest_sms(self, save_var: str = "last_sms", sms_type: str = "inbox", sms_limit: int = 1):
